@@ -1,0 +1,46 @@
+[
+  {
+    "product_id": "P1041",
+    "name": "Pulse Buds 141",
+    "brand": "NovaAudio",
+    "category": "electronics",
+    "aliases": ["pulse buds 141", "buds 141", "pb 141", "pb141", "141 buds"],
+    "specs": {
+      "battery_life": "42 hours total playback (6 hours per bud)",
+      "driver_size": "10mm dynamic bass drivers",
+      "connectivity": "Bluetooth 5.2 (10m range)",
+      "water_resistance": "IPX4 water and sweat resistant",
+      "charging": "USB Type-C ASAP charge (10 min gives 75 min)"
+    },
+    "documentation": "Pulse Buds 141 - Battery life: Provides up to 42 hours of total playback time with the charging case. Each earbud provides 6 hours on a single charge.\n\nPulse Buds 141 - Pairing Guide: Open the charging case near your smartphone and select 'Pulse Buds 141' from available Bluetooth devices. Ensure earbuds are charged above 20%.\n\nPulse Buds 141 - Warranty & Service: Comes with a 1-year limited warranty against manufacturing defects. Physical and liquid damage are not covered under warranty."
+  },
+  {
+    "product_id": "P1031",
+    "name": "Pulse Buds 131",
+    "brand": "NovaAudio",
+    "category": "electronics",
+    "aliases": ["pulse buds 131", "buds 131", "pb 131", "pb131", "131 buds"],
+    "specs": {
+      "battery_life": "60 hours total playback (8 hours per bud)",
+      "driver_size": "13mm sound drivers",
+      "connectivity": "Bluetooth 5.0",
+      "water_resistance": "IPX4 sweat resistant",
+      "charging": "USB Type-C fast charge (5 min gives 60 min)"
+    },
+    "documentation": "Pulse Buds 131 - Battery life: Delivers up to 60 hours of total playtime with the case. Individual buds last up to 8 hours.\n\nPulse Buds 131 - Audio Drivers: Powered by 13mm dynamic sound drivers for enhanced vocal clarity and deep bass response."
+  },
+  {
+    "product_id": "P2001",
+    "name": "Nova Watch Pro",
+    "brand": "NovaTech",
+    "category": "wearables",
+    "aliases": ["nova watch pro", "watch pro", "nova watch"],
+    "specs": {
+      "display": "1.43-inch AMOLED (466x466 resolution)",
+      "battery_life": "Up to 7 days normal use, 14 days standby",
+      "health_sensors": "Continuous Heart Rate, SpO2, Sleep stages, Stress level",
+      "water_resistance": "3 ATM water resistance"
+    },
+    "documentation": "Nova Watch Pro - Battery and Charging: The 300mAh high-density battery delivers up to 7 days of normal usage and charges fully in 90 minutes via magnetic fast puck.\n\nNova Watch Pro - Health Sensors: Features advanced optical sensors for 24/7 continuous heart rate monitoring, real-time blood oxygen (SpO2) alerts, and automatic sleep tracking."
+  }
+]

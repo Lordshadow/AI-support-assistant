@@ -174,5 +174,56 @@
 
 ---
 
-## Next Planned Task (Awaiting User Permission)
-- **[Task-03] PostgreSQL + pgvector Setup & Ingestion Pipeline:** Install and configure PostgreSQL with `pgvector`, define database schema DDL/migrations (products, specs, knowledge chunks with vector embeddings, orders, refunds), and build the ingestion pipeline.
+## [Task-03] - PostgreSQL + pgvector Setup, Schema DDL & Ingestion Pipeline
+**Timestamp:** 2026-11-02 17:19:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Establish unified database infrastructure for relational data, dense vector search (`pgvector`), and trigram fuzzy matching (`pg_trgm`) per Specification Sections 4, 5, and 8.
+- Implement production-grade knowledge ingestion pipeline conforming to Section 5.3:
+  - Prefix every chunk with product name (e.g. `Pulse Buds 141 - Battery life: ...`) to eliminate cross-product ambiguity.
+  - Chunk returns and refund policy documents strictly by clause (`Policy Clause X.X`).
+  - Strip navigation and live pricing boilerplate from vector storage.
+  - Provide multi-backend embedding adapters (zero-dependency `DeterministicLocalEmbedder` for offline testing, plus `NIMEmbedder` for NVIDIA NIM microservices).
+- Provide `docker-compose.yml` for unified `pgvector/pgvector:pg16` and `redis:7-alpine` deployment.
+
+### Architectural Boundaries & Modularity
+- `support-assistant/db/init.sql`: Production DDL defining `products`, `product_specs`, `product_prices`, `knowledge_chunks` (with 1024-dim vector column & HNSW index), `orders`, `order_items`, `refund_requests`, and `traces`.
+- `docker-compose.yml`: Multi-container configuration with health checks, environment parameters, and volume persistence.
+- `support-assistant/ingestion/chunker.py`: `KnowledgeChunker` enforcing Section 5.3 rules.
+- `support-assistant/ingestion/embedder.py`: `BaseEmbedder` protocol, `DeterministicLocalEmbedder` (1024-dim CPU-based normalized vectors), and `NIMEmbedder` (NVIDIA NIM integration).
+- `support-assistant/ingestion/pipeline.py`: Ingestion pipeline loading product and policy documents, computing embeddings, and executing filtered RAG vector retrieval (`WHERE product_id = :p_id`).
+- `support-assistant/data/`: Canonical datasets (`returns_policy.txt` and `sample_products.json`).
+
+### Files Touched
+- `support-assistant/db/init.sql` (Created - PostgreSQL schema DDL with pgvector & pg_trgm)
+- `docker-compose.yml` (Created - Docker Compose configuration for PostgreSQL and Redis)
+- `support-assistant/ingestion/chunker.py` (Created - Knowledge chunker enforcing Section 5.3 rules)
+- `support-assistant/ingestion/embedder.py` (Created - Embedder adapters for local CPU and NVIDIA NIM)
+- `support-assistant/ingestion/pipeline.py` (Created - End-to-end ingestion and vector search runner)
+- `support-assistant/ingestion/__init__.py` (Created - Ingestion package exports)
+- `support-assistant/data/returns_policy.txt` (Created - Store policy clauses)
+- `support-assistant/data/sample_products.json` (Created - Structured product documentation)
+- `support-assistant/tests/test_ingestion_and_db.py` (Created - 6 unit and integration tests)
+
+### Verification & Quality Assurance
+- **Command Executed:** `python support-assistant/tests/test_ingestion_and_db.py`
+- **Result:** **6/6 Tests Passed (100.0% in 0.004s)**
+  - `test_init_sql_schema_definitions`: PASS (Verified vector extension, HNSW index, and all 12 tables).
+  - `test_docker_compose_config`: PASS (Verified pgvector:pg16 and redis:7-alpine).
+  - `test_chunk_product_doc_prefixing_rule`: PASS (Product name prefixing confirmed; boilerplate stripped).
+  - `test_chunk_policy_doc_by_clause`: PASS (Clauses 1.0, 2.0, 3.0, 6.0, 7.0 cleanly separated into chunks).
+  - `test_deterministic_local_embedder`: PASS (1024-dim vectors L2 normalized to 1.0; semantic similarity holds).
+  - `test_ingestion_pipeline_end_to_end_and_filtered_rag`: PASS (Zero leakage across look-alike products).
+- **Full Suite Regression:** 27/27 tests passed across all 3 test suites (`test_core_policy`, `test_mockshop_adapters`, `test_ingestion_and_db`).
+
+### Git Version Control
+- **Action:** Staged and committed PostgreSQL schema, docker-compose, and ingestion pipeline.
+- **Commit:** `feat(db): add postgres pgvector schema, docker-compose, and ingestion pipeline`
+
+---
+
+## Next Planned Task (Awaiting User Permission & Consultation)
+- **Consultation & Planning on the AI Layer (Tasks 4–6):**
+  - **Requirement:** Inform user before starting AI layer work.
+  - **Topics:** Optimal local model selection, NVIDIA NIM embedding/reranker configuration, Groq API LLM integration, and FastMCP Tool Servers.
