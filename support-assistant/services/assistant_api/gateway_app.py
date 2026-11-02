@@ -480,3 +480,60 @@ class GatewayApp:
             "type": "http.response.body",
             "body": response_body
         })
+
+
+def create_default_app() -> GatewayApp:
+    """Factory creating fully wired production GatewayApp with all services."""
+    import os
+    from adapters.mockshop import MockCatalogAdapter, MockOrderAdapter, MockRefundAdapter
+    from services.mcp_servers import (
+        MCPCatalogServer, MCPOrderServer, MCPRefundServer,
+        MCPHandoffServer, MCPToolDispatcher
+    )
+    from core.router.cache import CacheService
+    from core.router.router import AIRouter
+    from core.tracing.trace_collector import TraceCollector
+    from services.worker.llm_client import GroqLLMClient, MockLLMClient
+    from services.support_desk.app import SupportDeskService
+
+    catalog = MockCatalogAdapter()
+    orders = MockOrderAdapter()
+    refunds = MockRefundAdapter(orders, auto_limit_inr=2000)
+
+    dispatcher = MCPToolDispatcher(
+        catalog_server=MCPCatalogServer(catalog),
+        order_server=MCPOrderServer(orders),
+        refund_server=MCPRefundServer(refunds),
+        handoff_server=MCPHandoffServer()
+    )
+
+    cache = CacheService()
+    router = AIRouter(cache_service=cache, dispatcher=dispatcher)
+    collector = TraceCollector()
+
+    groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_api_key:
+        llm = GroqLLMClient(api_key=groq_api_key)
+    else:
+        llm = MockLLMClient()
+
+    orchestrator = WorkerOrchestrator(
+        router=router,
+        dispatcher=dispatcher,
+        llm_client=llm
+    )
+
+    desk_service = SupportDeskService(
+        refund_adapter=refunds,
+        trace_collector=collector
+    )
+
+    return GatewayApp(
+        orchestrator=orchestrator,
+        support_desk_service=desk_service,
+        company_jwt_secret=os.getenv("STOREFRONT_JWT_SECRET")
+    )
+
+
+# Default module-level ASGI app instance for uvicorn
+app = create_default_app()
