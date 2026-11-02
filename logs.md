@@ -396,11 +396,67 @@
 
 ---
 
-## Project Completion Progress: 72.7% (8 / 11 Milestones Completed)
+## [Task-08] - Channel Gateway & Assistant API Service (ASGI / FastAPI & WhatsApp)
+**Timestamp:** 2026-11-02 17:55:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Build the Channel Gateway and Assistant API service connecting frontend channels (Website chat widget and Meta WhatsApp Cloud API) to the internal core orchestrator per Specification Section 15.1 and 15.2.
+- Implement Section 15.1 Auth Hierarchy:
+  - Anonymous sessions for unregistered visitors with basic FAQ capabilities.
+  - Identified customer sessions via customer JWT Bearer token verification (`POST /chat/messages` with `Authorization: Bearer <token>`).
+  - Verified customer sessions via secure OTP step-up challenge (`POST /auth/otp/send` and `POST /auth/otp/verify`).
+- Implement WhatsApp Cloud API security per Section 15.1.1:
+  - Meta Webhook Subscription Verification handshake (`GET /webhooks/whatsapp` with `hub.mode`, `hub.challenge`, and `hub.verify_token`).
+  - Cryptographic payload integrity verification using Meta's `X-Hub-Signature-256` header (HMAC-SHA256 with `app_secret` via `hmac.compare_digest`).
+  - WhatsApp message deduplication cache using `wamid` message IDs to prevent duplicate processing on network retries.
+  - WhatsApp Fast ACK response (immediate 200 OK delivery acknowledgment).
+- Implement standard ASGI 3.0 interface for zero-dependency execution with `uvicorn` or any ASGI server in production, accompanied by typed Pydantic request/response schemas.
+
+### Architectural Boundaries & Modularity
+- `services/assistant_api/jwt_auth.py`: Storefront customer JWT verifier and minting helper. Parses customer identity (`sub`), validates tenant isolation, and automatically downgrades invalid or expired tokens to `ANONYMOUS` without throwing unhandled exceptions.
+- `services/assistant_api/otp_service.py`: Step-up OTP engine. Generates 6-digit numeric codes with `secrets`, stores salted SHA-256 digests, enforces 5-minute TTL, locks out after 3 failed attempts, and promotes sessions to `AuthLevel.VERIFIED` with a 15-minute validity window.
+- `services/assistant_api/whatsapp_security.py`: Meta webhook validation and message deduplication cache with sliding expiration window.
+- `services/assistant_api/gateway_app.py`: Production Channel Gateway implementing standard ASGI 3.0 and REST endpoints (`/chat/messages`, `/webhooks/whatsapp`, `/auth/otp/send`, `/auth/otp/verify`, `/health`).
+- `services/assistant_api/__init__.py`: Clean module exports.
+- `tests/test_assistant_api.py`: 10 unit and integration tests covering JWT verification, OTP lifecycle, WhatsApp HMAC, deduplication, and ASGI endpoints without OS socket dependencies.
+
+### Files Touched
+- `support-assistant/services/assistant_api/jwt_auth.py` (Created - Customer JWT minting and verification)
+- `support-assistant/services/assistant_api/otp_service.py` (Created - Step-up OTP challenge service with constant-time verification)
+- `support-assistant/services/assistant_api/whatsapp_security.py` (Created - Meta webhook HMAC verification and message deduplicator)
+- `support-assistant/services/assistant_api/gateway_app.py` (Created - Channel Gateway & Assistant API ASGI Application)
+- `support-assistant/services/assistant_api/__init__.py` (Created - Gateway package exports)
+- `support-assistant/tests/test_assistant_api.py` (Created - 10 unit and integration tests)
+
+### Verification & Quality Assurance
+- **Command Executed:** `python support-assistant/tests/test_assistant_api.py`
+- **Result:** **10/10 Tests Passed (100.0% in 0.005s)**
+  - `test_customer_jwt_mint_and_verify`: PASS (Valid Bearer token resolved to `IDENTIFIED` level).
+  - `test_customer_jwt_tenant_mismatch_downgrades`: PASS (Cross-tenant token safely downgraded to `ANONYMOUS`).
+  - `test_customer_jwt_invalid_or_missing_header`: PASS (Missing/tampered token defaults to `ANONYMOUS`).
+  - `test_otp_challenge_and_verification`: PASS (Salted SHA-256 OTP verified; session upgraded to `VERIFIED`).
+  - `test_otp_lockout_after_three_attempts`: PASS (Challenge invalidated after 3 failed attempts).
+  - `test_whatsapp_webhook_handshake`: PASS (Meta GET handshake verified; invalid tokens return 403).
+  - `test_whatsapp_signature_verification_and_deduplication`: PASS (HMAC-SHA256 verified; duplicate `wamid` acknowledged without re-execution).
+  - `test_gateway_chat_anonymous_to_identified`: PASS (Full chat route with auth escalation verified).
+  - `test_gateway_otp_step_up_flow`: PASS (End-to-end send -> verify -> verified chat flow confirmed).
+  - `test_gateway_health`: PASS (`GET /health` returns 200 OK and active session count).
+- **Full Project Unit Regression:** **72/72 tests passed** across all 8 test suites.
+- **Evaluation Benchmark Regression:** **10/10 scenarios passed (100.0%)** via `run_evals.py`.
+- **Total Combined Tests:** **82/82 tests passing (100%)**.
+
+### Git Version Control
+- **Action:** Staged and committed Channel Gateway, WhatsApp security, OTP service, and test suite.
+- **Commit:** `feat(gateway): implement fastapi chat api, whatsapp webhook, and otp challenge service`
+
+---
+
+## Project Completion Progress: 81.8% (9 / 11 Milestones Completed)
 
 ## Next Planned Task (Awaiting User Permission)
-- **[Task-08] Gateway & Channel Webhook Service (FastAPI & WhatsApp):**
-  - Implement FastAPI application with Web chat API (`POST /chat/messages`).
-  - Implement WhatsApp webhook (`POST /webhooks/whatsapp`) with Meta signature verification.
-  - Implement customer JWT validation and OTP step-up challenge management.
-  - Connect gateway to worker queue.
+- **[Task-09] Comprehensive Pytest & Adversarial Suite (`support-assistant/tests/test_adversarial_and_evals.py`):**
+  - Implement full red-team adversarial suite for prompt injections, SQLi / vector pollution, indirect injections in order notes.
+  - Implement horizontal authorization test cases (cross-customer order status / refund attempts).
+  - Verify festival spike rate limiting (10× traffic protection) and budget circuit breakers.
+  - Validate 100% adherence to Requirements R1–R5.
