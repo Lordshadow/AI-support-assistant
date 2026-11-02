@@ -223,7 +223,57 @@
 
 ---
 
+## [Task-04] - FastMCP Tool Servers & Dispatcher with Transport-Level Auth
+**Timestamp:** 2026-11-02 17:27:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Build modular MCP tool servers (`catalog-server`, `order-server`, `refund-server`, and `handoff-server`) adhering to the principle of least privilege.
+- Solve the MCP identity problem specified in Section 7.6 & 15.1: The model must **never** supply `customer_id` or authorization credentials. Identity is passed via transport headers as a short-lived internal signed token (`Authorization: Bearer <token>`).
+- Enforce that the refund server requires step-up OTP verification (`AuthLevel.VERIFIED`), preventing unauthorized financial refunds.
+- Record execution traces for all tool calls including latencies and authorization levels for R5 Explainability.
+
+### Architectural Boundaries & Modularity
+- `services/mcp_servers/auth.py`: Token minting and decoding (`mint_internal_token` & `ctx_from_token`) using HS256 JWTs with 5-minute lifetimes.
+- `services/mcp_servers/catalog_server.py`: Wraps `CatalogPort` for `find_product`, `get_product_price`, `get_product_details`, `search_product_docs`, and `search_policy`.
+- `services/mcp_servers/order_server.py`: Wraps `OrderPort` for `get_order_status`, `list_recent_orders`, and `get_tracking`. Enforces `IDENTIFIED` auth level and customer ownership.
+- `services/mcp_servers/refund_server.py`: Wraps `RefundPort` for `check_refund_eligibility`, `create_refund_request`, and `get_refund_status`. Enforces `VERIFIED` step-up OTP and ₹2,000 auto-limit boundaries.
+- `services/mcp_servers/handoff_server.py`: Handles human escalations and ticket assignment.
+- `services/mcp_servers/dispatcher.py`: Acts as the unified MCP Client / Router for the worker orchestrator. Injects transport tokens, dispatches tool execution, and appends execution traces.
+
+### Files Touched
+- `support-assistant/services/mcp_servers/auth.py` (Created - Transport auth token minting and decoding)
+- `support-assistant/services/mcp_servers/catalog_server.py` (Created - MCP Catalog Server)
+- `support-assistant/services/mcp_servers/order_server.py` (Created - MCP Order Server)
+- `support-assistant/services/mcp_servers/refund_server.py` (Created - MCP Refund Server)
+- `support-assistant/services/mcp_servers/handoff_server.py` (Created - MCP Handoff Server)
+- `support-assistant/services/mcp_servers/dispatcher.py` (Created - Unified MCP Tool Dispatcher)
+- `support-assistant/services/mcp_servers/__init__.py` (Created - Package exports)
+- `support-assistant/tests/test_mcp_servers.py` (Created - 9 unit and integration tests)
+
+### Verification & Quality Assurance
+- **Command Executed:** `python support-assistant/tests/test_mcp_servers.py`
+- **Result:** **9/9 Tests Passed (100.0% in 0.005s)**
+  - `test_mcp_tool_schemas_hide_identity`: PASS (Verified that `customer_id`, `auth_token`, `level`, and `tenant_id` are completely hidden from model schemas).
+  - `test_internal_token_mint_and_decode`: PASS (Verified short-lived token correctly reconstructs `SessionContext`).
+  - `test_order_server_requires_identified_level`: PASS (Anonymous requests return `needs_auth: login_required`).
+  - `test_order_server_enforces_ownership`: PASS (Cross-account access blocked).
+  - `test_refund_server_requires_verified_otp_level`: PASS (Identified requests return `needs_auth: otp_required`).
+  - `test_refund_auto_limit_under_2000_vs_over_2000`: PASS (₹1,499 auto-processed; ₹4,500 held for supervisor review).
+  - `test_catalog_server_find_product_and_price`: PASS (Resolved product specs and live prices).
+  - `test_handoff_server_creates_ticket`: PASS (Ticket generated with `ESC-` prefix).
+  - `test_dispatcher_records_explainability_traces`: PASS (Traces recorded with latencies and auth levels).
+- **Full Project Regression:** **36/36 tests passed** across all 4 test suites (`test_core_policy`, `test_mockshop_adapters`, `test_ingestion_and_db`, `test_mcp_servers`).
+
+### Git Version Control
+- **Action:** Staged and committed MCP tool servers and dispatcher.
+- **Commit:** `feat(mcp): implement modular fastmcp tool servers with transport auth and trace dispatcher`
+
+---
+
 ## Next Planned Task (Awaiting User Permission & Consultation)
-- **Consultation & Planning on the AI Layer (Tasks 4–6):**
-  - **Requirement:** Inform user before starting AI layer work.
-  - **Topics:** Optimal local model selection, NVIDIA NIM embedding/reranker configuration, Groq API LLM integration, and FastMCP Tool Servers.
+- **[Task-05] Router, Language Normalizer & Redis Cache Layer:**
+  - Build Tamil / Tanglish / English normalizer.
+  - Implement Redis/in-memory cache-aside with fine-grained TTLs.
+  - Implement zero-cost template responder for order tracking and greetings.
+  - Implement Groq small-model router classifier for intent & model tiering.
