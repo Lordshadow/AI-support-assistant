@@ -66,7 +66,7 @@ class AIRouter:
             )
 
         # 3. Check for Simple Greeting (Zero-Cost Template)
-        greeting_words = {"hi", "hello", "hey", "vanakkam", "halo", "morning", "evening"}
+        greeting_words = {"hi", "hello", "hey", "vanakkam", "வணக்கம்", "halo", "morning", "evening"}
         if clean_msg in greeting_words or any(clean_msg == f"{w}!" for w in greeting_words):
             greeting_text = TemplateResponder.get_greeting(norm.language)
             return RouteDecision(

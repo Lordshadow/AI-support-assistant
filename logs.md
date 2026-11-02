@@ -452,11 +452,68 @@
 
 ---
 
-## Project Completion Progress: 81.8% (9 / 11 Milestones Completed)
+## [Task-09] - Comprehensive Pytest, Adversarial Red-Team & Policy Verification Suite
+**Timestamp:** 2026-11-02 18:07:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Conduct end-to-end security red-teaming, adversarial evaluation, and deterministic policy boundary testing per Specification Sections 1.2 (R1-R5), 6, 7.6, 8, 9, 10, 11, 12, 14, and 15.
+- Validate that the core architectural principle: *"The LLM understands and phrases. Code decides and acts."* holds under active adversarial attempts.
+- Verify that financial operations (refunds > ₹2,000, 30-day physical return window, non-refundable digital goods, OTP step-up verification) cannot be circumvented via prompt injections, authority claims, developer mode overrides, or multilingual phrasing.
+- Verify horizontal multi-tenant isolation and IDOR protection: customers cannot snoop or refund other customers' orders.
+- Verify R4 budget protection: festival spike (10× traffic) resilience where greetings and verified order tracking consume 0 LLM tokens.
+- Verify DPDP PII scrubbing and Section 14.1 / R5 Explainability audit trace generation.
+
+### Architectural Boundaries & Modularity
+- `support-assistant/tests/test_adversarial_and_evals.py`: Modular test harness spanning 5 test suites:
+  1. `TestAdversarialSecurityAndRedTeaming`: Direct jailbreaks, management override claims, indirect injections in order tracking notes, Tanglish injection attempts, and SQLi / XSS fuzzing inputs.
+  2. `TestHorizontalPrivilegeEscalation`: Cross-account order inspection denial, cross-account refund denial, and verification that model tool schemas expose zero auth or identity parameters.
+  3. `TestDeterministicPolicyBoundaries`: Exact ₹2,000 auto-refund threshold boundary (₹2,000 auto vs ₹2,001 supervisor review), 30 vs 31-day return window, undelivered order refund block, and idempotency key replay consistency.
+  4. `TestFestivalSpikeAndCostControl`: Zero-cost template routes for greetings across English, Tamil, and Tanglish; zero-cost order tracking for verified sessions; cache hit validation within 45s TTL.
+  5. `TestExplainabilityAndPIIScrubbing`: DPDP PII masking for phone numbers, emails, credit cards, and OTPs; anti-hallucination pre-transmission grounding verifier; Section 14.1 trace generation and Support Desk "Why This Answer" view.
+- Zero socket dependencies: All tests driven in-memory via synchronous coroutine stepping.
+
+### Files Touched
+- `support-assistant/tests/test_adversarial_and_evals.py` (Created - 18 comprehensive adversarial and policy verification tests)
+- `support-assistant/core/router/normalizer.py` (Modified - Added 'vanakkam' to Tanglish markers for greeting language detection)
+- `support-assistant/core/router/router.py` (Modified - Added Tamil script 'வணக்கம்' to greeting template triggers)
+
+### Verification & Quality Assurance
+- **Command Executed:** `python support-assistant/tests/test_adversarial_and_evals.py`
+- **Result:** **18/18 Tests Passed (100.0% in 0.005s)**
+  - `test_direct_prompt_injection_jailbreak_refusal`: PASS (Override attempt blocked; no refund executed).
+  - `test_policy_override_injection_refusal`: PASS (Management override claims rejected; Policy 6.0 enforced).
+  - `test_indirect_prompt_injection_in_data_payload`: PASS (Injection inside tracking query neutralized; 0 secret leaks).
+  - `test_multilingual_injection_in_tanglish`: PASS (Tanglish injection blocked; step-up OTP enforced).
+  - `test_sqli_and_xss_fuzzing_resilience`: PASS (SQLi, path traversal, null bytes normalized safely without crash).
+  - `test_customer_cannot_view_another_customers_order`: PASS (Cross-customer order masked as not found).
+  - `test_customer_cannot_refund_another_customers_order`: PASS (Cross-customer refund rejected).
+  - `test_identity_injected_via_tool_arguments_is_ignored`: PASS (All 6 tool schemas validated zero customer_id/token leakage).
+  - `test_exact_2000_inr_auto_refund_boundary`: PASS (₹2,000 processed; ₹2,001 pending approval).
+  - `test_return_window_boundary_day_30_vs_day_31`: PASS (Day 30 eligible; Day 31 strictly rejected).
+  - `test_undelivered_order_cannot_be_refunded`: PASS (In-transit order rejected).
+  - `test_idempotency_replay_returns_identical_transaction`: PASS (Replay returns identical transaction without side-effects).
+  - `test_festival_greeting_burst_zero_llm_cost`: PASS (Zero-token template response across en, ta, tanglish).
+  - `test_festival_order_tracking_burst_zero_llm_cost`: PASS (Zero-token template tracking for verified customers).
+  - `test_price_cache_hit_prevents_repeat_computation`: PASS (Cache hit within 45s TTL confirmed).
+  - `test_dpdp_pii_masking_comprehensive`: PASS (Phones, emails, cards, and OTPs scrubbed).
+  - `test_grounding_verifier_catches_unbacked_refund_claims`: PASS (Ungrounded refund claims blocked).
+  - `test_complete_r5_audit_trace_generation`: PASS (Section 14.1 trace and 'Why This Answer' view generated).
+- **Full Project Unit Regression:** **90/90 tests passed across all 9 test suites (in 0.024s)**.
+- **Evaluation Benchmark Regression:** **10/10 scenarios passed (100.0%)** via `run_evals.py`.
+- **Total Combined Tests:** **100 / 100 tests passing (100.0%)**.
+
+### Git Version Control
+- **Action:** Staged and committed adversarial test suite, router improvements, and test logs.
+- **Commit:** `feat(evals): add comprehensive adversarial test suite, red-team fuzzing, and policy verification`
+
+---
+
+## Project Completion Progress: 90.9% (10 / 11 Milestones Completed)
 
 ## Next Planned Task (Awaiting User Permission)
-- **[Task-09] Comprehensive Pytest & Adversarial Suite (`support-assistant/tests/test_adversarial_and_evals.py`):**
-  - Implement full red-team adversarial suite for prompt injections, SQLi / vector pollution, indirect injections in order notes.
-  - Implement horizontal authorization test cases (cross-customer order status / refund attempts).
-  - Verify festival spike rate limiting (10× traffic protection) and budget circuit breakers.
-  - Validate 100% adherence to Requirements R1–R5.
+- **[Task-10] Support Desk Staff Backend & Production Packaging (`support-assistant/services/support_desk/`):**
+  - Implement Support Desk staff approval queue (Approve/Reject refunds > ₹2,000 with staff notes).
+  - Implement Support Desk "Why This Answer" audit trace viewer.
+  - Finalize production containerization with `docker-compose.yml` linking assistant-api, worker, redis, and postgres.
+  - Deliver final comprehensive production verification.

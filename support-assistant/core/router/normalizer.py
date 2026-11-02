@@ -31,7 +31,8 @@ class LanguageNormalizer:
     TANGLISH_MARKERS = [
         r"\benna\b", r"\beppo\b", r"\baachu\b", r"\bsollunga\b", r"\bkonjam\b",
         r"\bungaloda\b", r"\bvarum\b", r"\birukku\b", r"\billa\b", r"\bpannunga\b",
-        r"\btheriyuma\b", r"\bkidaikkuma\b", r"\bvandhurucha\b", r"\bkaathirukken\b"
+        r"\btheriyuma\b", r"\bkidaikkuma\b", r"\bvandhurucha\b", r"\bkaathirukken\b",
+        r"\bvanakkam\b"
     ]
 
     # Human escalation trigger words
