@@ -86,5 +86,46 @@
 
 ---
 
+## [Task-01] - Core Domain Models, Abstract Ports & Deterministic Policy Engine
+**Timestamp:** 2026-11-02 16:30:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Establish the foundational domain models and abstract ports (`typing.Protocol`) for the application following Hexagonal Architecture (Ports and Adapters).
+- Implement the core principle: *"The LLM understands and phrases. Code decides and acts."* Enforce critical business rules (₹2,000 auto-refund threshold, 30-day physical return window, non-refundable digital goods, and auth level checks) deterministically in Python so that prompts and LLM hallucinations cannot alter financial or identity boundaries.
+
+### Architectural Boundaries & Modularity
+- `core/models.py`: Completely pure Python dataclasses and Enums (`SessionContext`, `Order`, `OrderItem`, `RefundResult`, `AuthLevel`). Zero framework or vendor dependencies.
+- `core/ports.py`: Decoupled `Protocol` interfaces (`CatalogPort`, `OrderPort`, `RefundPort`, `ChannelPort`, `SpeechPort`) defining exact contracts required by the core.
+- `core/policy_engine.py`: Isolated rule engine with deterministic functions: `require_level()`, `verify_order_ownership()`, `check_refund_eligibility()`, `evaluate_refund_state()`, and `generate_idempotency_key()`.
+
+### Files Touched
+- `support-assistant/core/models.py` (Created - Core domain entities, session context, auth hierarchy, and domain exceptions)
+- `support-assistant/core/ports.py` (Created - Abstract ports for Catalog, Orders, Refunds, Channels, and Speech)
+- `support-assistant/core/policy_engine.py` (Created - Deterministic eligibility, refund state transition, and auth verification)
+- `support-assistant/core/__init__.py` (Created - Clean public API exports for `core`)
+- `support-assistant/tests/test_core_policy.py` (Created - Comprehensive unit test suite for core models and policies)
+
+### Verification & Quality Assurance
+- **Command Executed:** `python support-assistant/tests/test_core_policy.py`
+- **Result:** **11/11 Unit Tests Passed (100.0% in 0.002s)**
+  - `test_auth_level_hierarchy`: Verified `VERIFIED > IDENTIFIED > ANONYMOUS` ordering.
+  - `test_require_level_enforcement`: Verified `AuthLevelError` raised on unauthorized operations.
+  - `test_verify_order_ownership`: Verified `OwnershipError` raised on cross-customer access.
+  - `test_eligibility_within_30_days`: PASS (10-day old order eligible for ₹1,499).
+  - `test_eligibility_expired_window`: PASS (35-day old order rejected with exact policy explanation).
+  - `test_eligibility_digital_goods_rejected`: PASS (Store Policy 6.0 non-refundable digital items enforced).
+  - `test_eligibility_already_refunded_rejected`: PASS (Double-refund attempts blocked).
+  - `test_eligibility_undelivered_order_rejected`: PASS (Orders in `Processing` cannot be refunded).
+  - `test_evaluate_refund_state_under_limit`: PASS (₹1,499 <= ₹2,000 -> `RefundState.PROCESSED`).
+  - `test_evaluate_refund_state_over_limit`: PASS (₹4,500 > ₹2,000 -> `RefundState.PENDING_APPROVAL`).
+  - `test_idempotency_key_consistency`: PASS (Deterministic SHA-256 keys generated).
+
+### Git Version Control
+- **Action:** Staged and committed core domain models, ports, and tests.
+- **Commit:** `feat(core): implement domain models, abstract ports, and deterministic policy engine`
+
+---
+
 ## Next Planned Task (Awaiting User Permission)
-- **[Task-01] Core Domain Models & Ports:** Build the domain entities, abstract ports (`typing.Protocol`), and pure business rule engine in `support-assistant/core/`.
+- **[Task-02] MockShop Adapters (`support-assistant/adapters/mockshop/`):** Implement concrete, decoupled adapters for `CatalogPort`, `OrderPort`, and `RefundPort` with seed data (look-alike products *Pulse Buds 141* vs *131*, varied order statuses, and idempotency tracking).
