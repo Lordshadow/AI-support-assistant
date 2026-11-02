@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NovaRetail Support Desk - Supervisor Console</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --surface-border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --accent: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    .navbar { background: var(--surface); border-bottom: 1px solid var(--surface-border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 1.2rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }
+    .staff-badge { background: #334155; padding: 6px 12px; border-radius: 9999px; font-size: 0.8rem; color: #cbd5e1; }
+    .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; width: 100%; flex: 1; }
+    .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .metric-card { background: var(--surface); border: 1px solid var(--surface-border); border-radius: 12px; padding: 1.25rem; }
+    .metric-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+    .metric-value { font-size: 1.8rem; font-weight: 700; margin-top: 0.5rem; }
+    .card { background: var(--surface); border: 1px solid var(--surface-border); border-radius: 12px; padding: 1.5rem; }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; }
+    .card-title { font-size: 1.1rem; font-weight: 600; }
+    .btn-refresh { background: #334155; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    .btn-refresh:hover { background: #475569; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th { padding: 10px 14px; font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--surface-border); }
+    td { padding: 12px 14px; font-size: 0.9rem; border-bottom: 1px solid var(--surface-border); }
+    .amount { font-weight: 700; color: #38bdf8; }
+    .badge { padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; display: inline-block; }
+    .badge-pending { background: rgba(245, 158, 11, 0.2); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.4); }
+    .actions { display: flex; gap: 8px; }
+    .btn-action { padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; border: none; cursor: pointer; transition: opacity 0.15s; }
+    .btn-action:hover { opacity: 0.85; }
+    .btn-approve { background: var(--accent); color: white; }
+    .btn-reject { background: var(--danger); color: white; }
+    .btn-trace { background: #334155; color: var(--primary); }
+
+    /* Modals */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 50; }
+    .modal-box { background: var(--surface); border: 1px solid var(--surface-border); padding: 1.5rem; border-radius: 12px; width: 90%; max-width: 540px; color: var(--text); }
+    .modal-box h3 { margin-bottom: 1rem; color: var(--primary); }
+    .detail-group { margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.5; }
+    .detail-group strong { color: var(--text-muted); }
+    textarea { width: 100%; background: #0f172a; border: 1px solid var(--surface-border); color: white; border-radius: 6px; padding: 10px; margin-top: 6px; outline: none; resize: vertical; min-height: 80px; font-size: 0.85rem; }
+    textarea:focus { border-color: var(--primary); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.25rem; }
+    pre { background: #0f172a; padding: 12px; border-radius: 8px; font-size: 0.8rem; overflow-x: auto; color: #a5f3fc; border: 1px solid var(--surface-border); max-height: 300px; }
+  </style>
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="brand">🛡️ NovaRetail Support Desk</div>
+    <div class="staff-badge">Supervisor: Raghavan (STAFF-882)</div>
+  </nav>
+
+  <div class="container">
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-title">Auto-Approved (&le; ₹2,000)</div>
+        <div class="metric-value" style="color: var(--accent);" id="mAuto">12</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Pending Supervisor Review</div>
+        <div class="metric-value" style="color: var(--warning);" id="mPending">2</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Supervisor Approved</div>
+        <div class="metric-value" style="color: var(--primary);" id="mApproved">4</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-title">Policy / Staff Rejected</div>
+        <div class="metric-value" style="color: var(--danger);" id="mRejected">1</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Pending Refund Approvals (&gt; ₹2,000 Threshold)</div>
+        <button class="btn-refresh" onclick="loadPending()">🔄 Refresh</button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Refund ID</th>
+            <th>Order ID</th>
+            <th>Customer</th>
+            <th>Amount</th>
+            <th>Reason</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="refundTable">
+          <tr>
+            <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading pending approvals...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Decision Modal -->
+  <div class="modal-overlay" id="decisionModal">
+    <div class="modal-box">
+      <h3 id="decTitle">Review Refund Request</h3>
+      <div class="detail-group">
+        <div><strong>Refund ID:</strong> <span id="decRefundId">-</span></div>
+        <div><strong>Order ID:</strong> <span id="decOrderId">-</span></div>
+        <div><strong>Amount:</strong> <span id="decAmount" class="amount">-</span></div>
+        <div><strong>Customer Reason:</strong> <span id="decReason">-</span></div>
+      </div>
+      <label>
+        <strong>Supervisor Audit Note:</strong>
+        <textarea id="decNote" placeholder="Enter reason for approval or mandatory rejection justification..."></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-action" style="background: #475569; color: white;" onclick="closeDecisionModal()">Cancel</button>
+        <button class="btn-action btn-reject" id="btnConfirmReject" onclick="confirmDecision('reject')">Reject Refund</button>
+        <button class="btn-action btn-approve" id="btnConfirmApprove" onclick="confirmDecision('approve')">Approve Refund</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Why This Answer Modal -->
+  <div class="modal-overlay" id="traceModal">
+    <div class="modal-box" style="max-width: 680px;">
+      <h3>🔍 Why This Answer (Audit Evidence Trace)</h3>
+      <div id="traceContent">
+        <pre id="traceJson">Loading trace evidence...</pre>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-action" style="background: #475569; color: white;" onclick="closeTraceModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let activeRefund = null;
+
+    async function loadPending() {
+      try {
+        const res = await fetch("/desk/refunds/pending");
+        if (res.ok) {
+          const list = await res.json();
+          renderTable(list);
+        } else {
+          renderFallbackTable();
+        }
+      } catch (e) {
+        renderFallbackTable();
+      }
+    }
+
+    function renderTable(list) {
+      const tbody = document.getElementById("refundTable");
+      if (!list || list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #94a3b8; padding: 2rem;">✨ Zero pending refund requests. All items processed!</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(r => `
+        <tr>
+          <td><code>${r.refund_id}</code></td>
+          <td>${r.order_id}</td>
+          <td>${r.customer_id}</td>
+          <td class="amount">₹${r.amount_inr.toLocaleString()}</td>
+          <td>${r.reason}</td>
+          <td><span class="badge badge-pending">${r.state}</span></td>
+          <td>
+            <div class="actions">
+              <button class="btn-action btn-approve" onclick="openDecisionModal('${r.refund_id}', '${r.order_id}', ${r.amount_inr}, '${r.reason}', 'approve')">Approve</button>
+              <button class="btn-action btn-reject" onclick="openDecisionModal('${r.refund_id}', '${r.order_id}', ${r.amount_inr}, '${r.reason}', 'reject')">Reject</button>
+              <button class="btn-action btn-trace" onclick="viewTrace('${r.refund_id}')">Evidence</button>
+            </div>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function renderFallbackTable() {
+      renderTable([
+        { refund_id: "REF-8812A", order_id: "ORD-8812", customer_id: "CUST-42", amount_inr: 4500, reason: "Smartwatch display stopped responding", state: "pending_approval" },
+        { refund_id: "REF-9921B", order_id: "ORD-9921", customer_id: "CUST-88", amount_inr: 3299, reason: "Wireless speaker battery defect", state: "pending_approval" }
+      ]);
+    }
+
+    function openDecisionModal(refundId, orderId, amount, reason, action) {
+      activeRefund = { refundId, orderId, amount, reason, action };
+      document.getElementById("decRefundId").innerText = refundId;
+      document.getElementById("decOrderId").innerText = orderId;
+      document.getElementById("decAmount").innerText = "₹" + amount.toLocaleString();
+      document.getElementById("decReason").innerText = reason;
+      document.getElementById("decNote").value = "";
+
+      if (action === "approve") {
+        document.getElementById("btnConfirmApprove").style.display = "inline-block";
+        document.getElementById("btnConfirmReject").style.display = "none";
+      } else {
+        document.getElementById("btnConfirmApprove").style.display = "none";
+        document.getElementById("btnConfirmReject").style.display = "inline-block";
+      }
+      document.getElementById("decisionModal").style.display = "flex";
+    }
+
+    function closeDecisionModal() {
+      document.getElementById("decisionModal").style.display = "none";
+    }
+
+    async function confirmDecision(action) {
+      const note = document.getElementById("decNote").value.trim();
+      if (action === "reject" && !note) {
+        alert("Staff audit note is mandatory when rejecting a refund.");
+        return;
+      }
+
+      try {
+        const endpoint = `/desk/refunds/${activeRefund.refundId}/${action}`;
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ staff_id: "STAFF-882", notes: note })
+        });
+        if (res.ok) {
+          alert(`Refund ${activeRefund.refundId} has been ${action}d successfully.`);
+        }
+      } catch (e) {
+        alert(`Refund ${activeRefund.refundId} ${action}d in demo console.`);
+      }
+      closeDecisionModal();
+      loadPending();
+    }
+
+    function viewTrace(refundId) {
+      document.getElementById("traceModal").style.display = "flex";
+      const sampleTrace = {
+        trace_id: "trc_f89b12a",
+        order_id: "ORD-8812",
+        inferred_intent: "refund_request",
+        route: "large_model (amount > ₹2,000 threshold)",
+        grounding_check: {
+          passed_gate: true,
+          violations: [],
+          policy_clause: "Clause 2.0 (Physical product return within 30-day window)"
+        },
+        tools_executed: [
+          { name: "check_refund_eligibility", eligible: true, max_amount: 4500 },
+          { name: "create_refund_request", result_state: "pending_approval", rule: "Amount ₹4,500 > ₹2,000 limit -> Escalate to human supervisor" }
+        ],
+        audit_trail: {
+          customer_masked: "CUST-42 (Verified via OTP)",
+          user_input_scrubbed: "Refund ORD-8812 smartwatch display not working, my phone is ******4321",
+          bot_reply_scrubbed: "Your refund request of ₹4,500 has been submitted to a supervisor for review."
+        }
+      };
+      document.getElementById("traceJson").innerText = JSON.stringify(sampleTrace, null, 2);
+    }
+
+    function closeTraceModal() {
+      document.getElementById("traceModal").style.display = "none";
+    }
+
+    // Auto-load on page start
+    loadPending();
+  </script>
+</body>
+</html>

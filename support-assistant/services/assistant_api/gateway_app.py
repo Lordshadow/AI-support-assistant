@@ -15,6 +15,8 @@ Implements standard ASGI 3.0 interface for zero-dependency execution with uvicor
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
+import re
 from typing import Any, Callable, Dict, Optional, Tuple
 import urllib.parse
 import uuid
@@ -86,7 +88,8 @@ class GatewayApp:
         orchestrator: WorkerOrchestrator,
         otp_service: Optional[OTPService] = None,
         whatsapp_security: Optional[WhatsAppSecurity] = None,
-        company_jwt_secret: Optional[str] = None
+        company_jwt_secret: Optional[str] = None,
+        support_desk_service: Optional[Any] = None
     ):
         self.orchestrator = orchestrator
         self.otp_service = otp_service or OTPService()
@@ -95,6 +98,8 @@ class GatewayApp:
             verify_token="novaretail_verify_token_secure"
         )
         self.company_jwt_secret = company_jwt_secret
+        self.support_desk_service = support_desk_service
+        self.static_dir = Path(__file__).parent.parent.parent / "static"
 
         # Session storage: (tenant_id, conv_id) -> SessionContext
         self._session_store: Dict[Tuple[str, str], SessionContext] = {}
@@ -383,6 +388,84 @@ class GatewayApp:
                 response_body = json.dumps(resp).encode("utf-8")
             except Exception as e:
                 status_code, response_body = 400, json.dumps({"detail": str(e)}).encode("utf-8")
+
+        elif path in ("/widget", "/widget/index.html") and method == "GET":
+            widget_file = self.static_dir / "widget" / "index.html"
+            if widget_file.exists():
+                status_code = 200
+                content_type = "text/html"
+                with open(widget_file, "rb") as f:
+                    response_body = f.read()
+
+        elif path in ("/desk", "/desk/index.html") and method == "GET":
+            desk_file = self.static_dir / "desk" / "index.html"
+            if desk_file.exists():
+                status_code = 200
+                content_type = "text/html"
+                with open(desk_file, "rb") as f:
+                    response_body = f.read()
+
+        elif path == "/desk/refunds/pending" and method == "GET":
+            if self.support_desk_service:
+                pending = await self.support_desk_service.get_pending_refunds()
+                status_code = 200
+                response_body = json.dumps(pending).encode("utf-8")
+            else:
+                status_code = 200
+                response_body = b"[]"
+
+        elif path.startswith("/desk/refunds/") and path.endswith("/approve") and method == "POST":
+            refund_id = path.split("/")[3]
+            try:
+                data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+                staff_id = data.get("staff_id", "staff_default")
+                notes = data.get("notes")
+                if self.support_desk_service:
+                    ok, msg, res = await self.support_desk_service.approve_refund(refund_id, staff_id, notes)
+                    status_code = 200 if ok else 400
+                    response_body = json.dumps({"success": ok, "message": msg, "refund": res}).encode("utf-8")
+                else:
+                    status_code, response_body = 503, b'{"detail": "Support desk service unavailable"}'
+            except Exception as e:
+                status_code, response_body = 400, json.dumps({"detail": str(e)}).encode("utf-8")
+
+        elif path.startswith("/desk/refunds/") and path.endswith("/reject") and method == "POST":
+            refund_id = path.split("/")[3]
+            try:
+                data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+                staff_id = data.get("staff_id", "staff_default")
+                notes = data.get("notes", "")
+                if self.support_desk_service:
+                    ok, msg, res = await self.support_desk_service.reject_refund(refund_id, staff_id, notes)
+                    status_code = 200 if ok else 400
+                    response_body = json.dumps({"success": ok, "message": msg, "refund": res}).encode("utf-8")
+                else:
+                    status_code, response_body = 503, b'{"detail": "Support desk service unavailable"}'
+            except Exception as e:
+                status_code, response_body = 400, json.dumps({"detail": str(e)}).encode("utf-8")
+
+        elif path.startswith("/desk/traces/") and method == "GET":
+            trace_id = path.split("/")[-1]
+            if self.support_desk_service:
+                trace_view = self.support_desk_service.get_why_this_answer_trace(trace_id)
+                if trace_view:
+                    status_code = 200
+                    response_body = json.dumps(trace_view).encode("utf-8")
+                else:
+                    status_code = 404
+                    response_body = json.dumps({"detail": f"Trace '{trace_id}' not found."}).encode("utf-8")
+            else:
+                status_code = 503
+                response_body = b'{"detail": "Support desk service unavailable"}'
+
+        elif path == "/desk/stats" and method == "GET":
+            if self.support_desk_service:
+                metrics = await self.support_desk_service.get_metrics()
+                status_code = 200
+                response_body = json.dumps(metrics).encode("utf-8")
+            else:
+                status_code = 200
+                response_body = b'{"status": "no_desk_service"}'
 
         # Send ASGI response
         await send({

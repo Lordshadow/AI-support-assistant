@@ -24,7 +24,7 @@ services:
       retries: 5
 
   # -------------------------------------------------------------
-  # 2. Redis (Cache-Aside, Rate Limiting & Burst Queue)
+  # 2. Redis (Cache-Aside, Rate Limiting & Burst Protection)
   # -------------------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -39,6 +39,34 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # -------------------------------------------------------------
+  # 3. NovaRetail Assistant API Gateway & Frontends
+  # -------------------------------------------------------------
+  assistant-api:
+    build:
+      context: ./support-assistant
+      dockerfile: Dockerfile
+    container_name: novaretail-assistant-api
+    restart: always
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=novaretail_db
+      - POSTGRES_USER=novaretail_admin
+      - POSTGRES_PASSWORD=novaretail_secure_pass
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET:-test_whatsapp_secret_9941}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN:-novaretail_verify_token_secure}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:
