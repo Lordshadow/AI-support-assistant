@@ -127,5 +127,52 @@
 
 ---
 
+## [Task-02] - MockShop Adapters (Catalog, Orders, Refunds)
+**Timestamp:** 2026-11-02 16:38:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Build concrete, decoupled in-memory implementations of `CatalogPort`, `OrderPort`, and `RefundPort` to allow rapid, zero-dependency, local testing of the complete store lifecycle.
+- Seed the system with realistic data explicitly designed to validate critical edge cases:
+  - Look-alike product pairs (*Pulse Buds 141* vs *Pulse Buds 131*) to test disambiguation.
+  - Diverse orders: eligible for refund (`ORD-1029`), shipped/in-transit (`ORD-1030`), auto-refund under ₹2,000 (`ORD-5501`), over-limit requiring approval (`ORD-8812`), digital non-refundable goods (`ORD-7721`), and cross-customer security boundaries (`ORD-9999`).
+  - Idempotency tracking and Support Desk staff decision workflow.
+
+### Architectural Boundaries & Modularity
+- `adapters/mockshop/catalog_adapter.py`: Implements `CatalogPort`. Resolves names and aliases via hybrid scoring, provides live pricing/discounts, and isolates document chunks strictly per `product_id`.
+- `adapters/mockshop/order_adapter.py`: Implements `OrderPort`. Enforces ownership verification (returning `None` for unowned orders), delivers chronological shipping tracking timelines.
+- `adapters/mockshop/refund_adapter.py`: Implements `RefundPort`. Integrates with `policy_engine` for eligibility, evaluates ₹2,000 auto-limit vs supervisor approval, caches idempotency keys, and supports Support Desk staff approve/reject transitions.
+- `adapters/mockshop/__init__.py`: Clean module exports for the mockshop package.
+- Zero socket dependencies: Uses synchronous driving in unit tests to ensure deterministic execution in sandboxed environments.
+
+### Files Touched
+- `support-assistant/adapters/mockshop/catalog_adapter.py` (Created - CatalogPort adapter with seed products and look-alikes)
+- `support-assistant/adapters/mockshop/order_adapter.py` (Created - OrderPort adapter with ownership checks and tracking)
+- `support-assistant/adapters/mockshop/refund_adapter.py` (Created - RefundPort adapter with idempotency and staff decision recording)
+- `support-assistant/adapters/mockshop/__init__.py` (Created - Package exports)
+- `support-assistant/adapters/__init__.py` (Created - Top-level adapters package)
+- `support-assistant/tests/test_mockshop_adapters.py` (Created - 10 comprehensive integration tests for adapters)
+
+### Verification & Quality Assurance
+- **Command Executed:** `python support-assistant/tests/test_mockshop_adapters.py`
+- **Result:** **10/10 Integration Tests Passed (100.0% in 0.001s)**
+  - `test_catalog_exact_and_lookalike_search`: PASS (Identified P1041 exact score >=0.90, captured both 141 and 131 on broad query).
+  - `test_catalog_get_details_and_live_price`: PASS (Exact specs and live discount prices retrieved).
+  - `test_catalog_search_product_docs_confined`: PASS (Zero document leaks across product IDs).
+  - `test_order_lookup_with_ownership_enforcement`: PASS (Unowned ORD-9999 returns None).
+  - `test_order_tracking_events`: PASS (Chronological shipment events returned).
+  - `test_refund_under_2000_processed`: PASS (₹1,499 approved automatically).
+  - `test_refund_over_2000_pending_approval`: PASS (₹4,500 held for supervisor review).
+  - `test_refund_idempotency_replay`: PASS (Repeated request with same key returns identical result).
+  - `test_refund_digital_goods_rejection`: PASS (Store Policy 6.0 digital item rejected).
+  - `test_staff_decision_recording`: PASS (Pending refund approved with staff identity and timestamp).
+- **Regression Command:** `python support-assistant/tests/test_core_policy.py` -> **11/11 tests passed**.
+
+### Git Version Control
+- **Action:** Staged and committed mockshop adapters and test suite.
+- **Commit:** `feat(adapters): implement mockshop catalog, order, and refund adapters with test suite`
+
+---
+
 ## Next Planned Task (Awaiting User Permission)
-- **[Task-02] MockShop Adapters (`support-assistant/adapters/mockshop/`):** Implement concrete, decoupled adapters for `CatalogPort`, `OrderPort`, and `RefundPort` with seed data (look-alike products *Pulse Buds 141* vs *131*, varied order statuses, and idempotency tracking).
+- **[Task-03] PostgreSQL + pgvector Setup & Ingestion Pipeline:** Install and configure PostgreSQL with `pgvector`, define database schema DDL/migrations (products, specs, knowledge chunks with vector embeddings, orders, refunds), and build the ingestion pipeline.
