@@ -271,9 +271,55 @@
 
 ---
 
-## Next Planned Task (Awaiting User Permission & Consultation)
-- **[Task-05] Router, Language Normalizer & Redis Cache Layer:**
-  - Build Tamil / Tanglish / English normalizer.
-  - Implement Redis/in-memory cache-aside with fine-grained TTLs.
-  - Implement zero-cost template responder for order tracking and greetings.
-  - Implement Groq small-model router classifier for intent & model tiering.
+## [Task-05] - Router, Language Normalizer & Redis Cache Layer
+**Timestamp:** 2026-11-02 17:31:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Implement intelligent query routing and cost control mechanisms per Specification Sections 3.3, 9.1, 11, and 12.
+- Eliminate LLM API costs for high-frequency queries using zero-cost templates for greetings and verified order tracking.
+- Implement cache-aside with fine-grained TTLs (45s for price, 10s for orders, never cache refunds).
+- Normalizer supports English, Tamil, and Tanglish without translating IDs, model numbers, or currency amounts.
+- Automatically route simple requests to the small model tier (Groq 8B) and complex disputes/comparisons to the large model tier (Groq 70B).
+
+### Architectural Boundaries & Modularity
+- `core/router/normalizer.py`: Language detection, entity extraction, dispute and comparison flagging.
+- `core/router/cache.py`: Cache-aside service enforcing TTL policies and product cache invalidation.
+- `core/router/templates.py`: Deterministic template renderer across English, Tamil, and Tanglish.
+- `core/router/router.py`: Multi-tier router deciding between cache, template, small model, large model, and handoff.
+
+### Files Touched
+- `support-assistant/core/router/normalizer.py` (Created - Language detection and entity extraction)
+- `support-assistant/core/router/cache.py` (Created - Fine-grained TTL cache-aside service)
+- `support-assistant/core/router/templates.py` (Created - Multilingual zero-cost template responder)
+- `support-assistant/core/router/router.py` (Created - AI multi-tier request router)
+- `support-assistant/core/router/__init__.py` (Created - Router package exports)
+- `support-assistant/tests/test_router_and_cache.py` (Created - 9 unit and integration tests)
+
+### Verification & Quality Assurance
+- **Command Executed:** `python support-assistant/tests/test_router_and_cache.py`
+- **Result:** **9/9 Tests Passed (100.0% in 0.002s)**
+  - `test_language_detection`: PASS (English, Tamil script, and Tanglish detected accurately).
+  - `test_entity_extraction`: PASS (Extracted `ORD-5501` and `₹1,499`).
+  - `test_cache_ttl_and_invalidation`: PASS (Key invalidation on re-ingest verified).
+  - `test_greeting_template_route`: PASS (Matched zero-cost greeting template).
+  - `test_order_status_template_route`: PASS (Rendered verified order status template).
+  - `test_comparison_routes_to_large_model`: PASS (Pulse Buds 141 vs 131 routed to large model).
+  - `test_customer_dispute_routes_to_large_model`: PASS (Agitated dispute routed to large model).
+  - `test_human_handoff_route`: PASS (Human request routed to handoff queue).
+  - `test_standard_faq_routes_to_small_model`: PASS (Standard FAQ routed to fast small model).
+- **Full Project Regression:** **45/45 tests passed** across all 5 test suites.
+
+### Git Version Control
+- **Action:** Staged and committed router, normalizer, and cache-aside service.
+- **Commit:** `feat(router): implement multilingual normalizer, cache-aside, and multi-tier router`
+
+---
+
+## Project Completion Progress: 54.5% (6 / 11 Milestones Completed)
+
+## Next Planned Task (Awaiting User Permission)
+- **[Task-06] Worker Orchestrator & LLM Integration (Groq & NIM):**
+  - Build the conversational agent loop and tool execution planning.
+  - Implement look-alike disambiguation gate.
+  - Integrate Groq API client with local mock engine fallback for zero-cost offline development.
