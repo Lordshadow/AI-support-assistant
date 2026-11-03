@@ -373,6 +373,7 @@ class GatewayApp:
 
         # Dispatch to Master Control Dashboard FastAPI sub-app if matched
         if path.startswith((
+            "/api/admin/v1",
             "/desk/auth",
             "/desk/conversations",
             "/desk/escalations",

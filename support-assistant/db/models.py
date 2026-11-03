@@ -81,7 +81,7 @@ class StaffSession(Base):
 
     session_id = Column(String(128), primary_key=True)
     staff_id = Column(String(64), ForeignKey("staff_users.staff_id", ondelete="CASCADE"), nullable=False)
-    active_tenant_id = Column(String(64), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
+    active_tenant_id = Column("tenant_id", String(64), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
@@ -89,7 +89,7 @@ class StaffSession(Base):
 
     __table_args__ = (
         Index("idx_staff_sessions_staff", "staff_id"),
-        Index("idx_staff_sessions_tenant", "active_tenant_id"),
+        Index("idx_staff_sessions_tenant", "tenant_id"),
     )
 
 

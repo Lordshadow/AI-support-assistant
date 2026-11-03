@@ -117,7 +117,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
                 user.failed_attempts += 1
                 if user.failed_attempts >= 5:
                     user.locked_until = now + timedelta(minutes=15)
-                await session.commit()
+                await session.flush()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials"
@@ -126,7 +126,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
         # Successful password verification: reset failed attempts
         user.failed_attempts = 0
         user.locked_until = None
-        await session.commit()
+        await session.flush()
 
         # If user has MFA enrolled, issue short-lived MFA ticket
         if user.mfa_secret:
@@ -238,7 +238,7 @@ async def _create_staff_session(
         timestamp=now,
     )
     session.add(audit)
-    await session.commit()
+    await session.flush()
 
     # 3. Set HttpOnly, SameSite=Strict cookie
     response.set_cookie(
@@ -318,7 +318,7 @@ async def step_up(req: StepUpRequest, request: Request):
             timestamp=now
         )
         session.add(audit)
-        await session.commit()
+        await session.flush()
 
         return {
             "status": "stepped_up",
@@ -334,7 +334,7 @@ async def logout(request: Request, response: Response):
         async with get_async_session() as session:
             stmt = update(StaffSession).where(StaffSession.session_id == session_id).values(revoked_at=now)
             await session.execute(stmt)
-            await session.commit()
+            await session.flush()
 
         if session_id in _step_up_tracker:
             del _step_up_tracker[session_id]

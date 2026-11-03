@@ -39,11 +39,15 @@ sys.exit(0)
 EOF
 fi
 
-# Run database migrations if RUN_MIGRATIONS is not explicitly set to false
+# Run database migrations and seed bootstrap staff if RUN_MIGRATIONS is not explicitly set to false
 if [ "$RUN_MIGRATIONS" != "false" ]; then
     echo "Applying Alembic database migrations..."
     alembic upgrade head || {
         echo "Alembic migration failed or SQLite in-memory fallback active."
+    }
+    echo "Bootstrapping default staff users..."
+    python -m db.seed_staff || {
+        echo "Staff seeding warning/skipped."
     }
 fi
 
