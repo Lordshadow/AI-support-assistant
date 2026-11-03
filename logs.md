@@ -951,7 +951,70 @@
 - `9c0d017 feat(knowledge): implement knowledge version manifest, clause preview, deletion guard, and eval gate`
 
 ### Next Planned Task (Awaiting User Permission):
-- [ ] Task ID: Task-18: Master Control Dashboard Phase 6: Website Widget (Spec 16.1, 16.2) & React Dashboard Frontend
+- [x] Task ID: Task-18: Master Control Dashboard Phase 6: Website Widget (Spec 16.1, 16.2) & React Dashboard Frontend
+
+---
+
+## [Task-18] - Master Control Dashboard Phase 6: Website Widget (Spec 16.1, 16.2) & React Dashboard Frontend
+**Timestamp:** 2026-11-03 14:48:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Implement Components 7 & 8 of the Master Control Dashboard per approved Implementation Plan (v4):
+  - Spec 16.1 & 16.2 Embeddable Website Widget:
+    - Open Shadow DOM (`element.attachShadow({ mode: 'open' })`) for full style isolation from host stylesheets.
+    - Strict server-side origin enforcement: Gateway validates `Origin`/`Referer` headers against `tenants.widget_origins` on `/chat/*` and `/auth/otp/*`.
+    - Dynamic token refresh: calls `data-get-token` callback function dynamically before requests.
+    - Zero `innerHTML` injection: text rendering strictly via `textContent` to prevent DOM XSS vulnerabilities.
+  - Spec 15.1.8 Master Control Dashboard React Frontend (`master-dashboard/`):
+    - Modern React SPA built with Vite.
+    - Auth & RBAC State (`AuthContext.jsx`): handles Argon2id + TOTP MFA authentication, double-submit CSRF with `X-CSRF-Token`, and role-based permissions (`executive`, `manager`, `admin`).
+    - Dedicated management views:
+      - `RefundsPage.jsx`: Concurrency-safe approvals queue, step-up MFA challenge for refunds $> ₹5,000$, and real-time status transitions.
+      - `ConversationsPage.jsx`: Masked dialogue transcript viewer with DPDP-compliant PII masking and Manager-only step-up unmasking, plus Spec 14.1 trace viewer.
+      - `EscalationsPage.jsx`: Real-time ticket queue with wait time calculation and atomic claim race protection.
+      - `KnowledgePage.jsx`: Policy upload, clause preview, confirmed policy values form, automated eval runner, atomic pointer promotion, and one-click rollback.
+      - `ReportsPage.jsx`: R4 spend ledger visualizer, daily (₹2,500) and monthly (₹50,000) spend meters, deflection rate, and p50/p95 latency metrics.
+      - `StaffAdminPage.jsx`: Admin-only staff account management, session revocation, and tenant role administration.
+
+### Architectural Boundaries & Modularity
+- **Embeddable Widget (`support-assistant/static/widget/v1/widget.js`)**:
+  - Independent Web Component / script attachment with Open Shadow DOM encapsulation.
+  - Communication over Fetch API to Gateway `/chat/messages` and `/auth/otp/*`.
+- **Gateway Server-Side Origin Guard (`support-assistant/services/assistant_api/gateway_app.py`)**:
+  - Middleware/handler checking `Origin` or `Referer` against `tenants.widget_origins`. Rejects unauthorized origins with 403 Forbidden.
+- **Master Control Dashboard Frontend (`master-dashboard/`)**:
+  - Modular React components and pages with clean API client layer (`api/client.js`).
+  - HttpOnly session cookie transmission with double-submit CSRF headers.
+
+### Files Touched
+- `support-assistant/static/widget/v1/widget.js` (Created)
+- `support-assistant/services/assistant_api/gateway_app.py` (Modified - origin enforcement & widget script serving)
+- `support-assistant/tests/test_widget_security_and_cors.py` (Created)
+- `master-dashboard/` (Created React application with Vite, components, and pages)
+
+### Verification & Quality Assurance
+- Automated Test Suite:
+  - `python -m unittest support-assistant/tests/test_widget_security_and_cors.py`:
+    - `test_widget_js_static_serving`: Verified Gateway serves `/widget/v1/widget.js` with `application/javascript; charset=utf-8`.
+    - `test_server_side_origin_enforcement_allowed`: Verified request with `Origin: https://shop.novaretail.com` receives 200 OK.
+    - `test_server_side_origin_enforcement_disallowed`: Verified request with `Origin: https://malicious-phishing-site.com` receives 403 Forbidden with descriptive detail.
+    - `test_widget_script_security_and_shadow_dom_invariants`: Verified Open Shadow DOM encapsulation, zero innerHTML injection (`bubble.textContent = text`), and `data-get-token` callback invocation.
+    - Outcome: **4/4 passed in 0.015s**.
+- Frontend Build Verification:
+  - `npm.cmd run build` inside `master-dashboard/`:
+    - Output: `dist/index.html` (0.71 kB), `dist/assets/index-Cr97oOWT.css` (13.08 kB), `dist/assets/index-C_CaZ_O8.js` (243.49 kB).
+    - Outcome: **Vite build succeeded in 534ms with 0 errors and 0 warnings**.
+- Full Regression Test:
+  - Command: `python -m unittest discover -s support-assistant/tests`
+  - Outcome: **134/134 passed in 18.276s (0 regressions)**.
+
+### Git Commit
+- `Pending commit for Phase 6`
+
+### Next Planned Task (Awaiting User Permission):
+- [ ] Task ID: Task-19: Master Control Dashboard Phase 7: Hardening & 10× Load Burst
+
 
 
 

@@ -89,7 +89,8 @@ class GatewayApp:
         otp_service: Optional[OTPService] = None,
         whatsapp_security: Optional[WhatsAppSecurity] = None,
         company_jwt_secret: Optional[str] = None,
-        support_desk_service: Optional[Any] = None
+        support_desk_service: Optional[Any] = None,
+        tenant_origins: Optional[Dict[str, List[str]]] = None
     ):
         self.orchestrator = orchestrator
         self.otp_service = otp_service or OTPService()
@@ -99,10 +100,28 @@ class GatewayApp:
         )
         self.company_jwt_secret = company_jwt_secret
         self.support_desk_service = support_desk_service
+        self.tenant_origins = tenant_origins or {
+            "demo-shop": ["*"],
+            "tenant_novaretail": ["https://shop.novaretail.com", "http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000"]
+        }
         self.static_dir = Path(__file__).parent.parent.parent / "static"
 
         # Session storage: (tenant_id, conv_id) -> SessionContext
         self._session_store: Dict[Tuple[str, str], SessionContext] = {}
+
+    def is_origin_allowed(self, tenant_id: str, origin: Optional[str]) -> bool:
+        """
+        Validates request origin against tenant allowlist (Spec 16.1 & 16.2).
+        Returns True if allowed, False if disallowed.
+        """
+        if not origin:
+            return True  # Server-to-server or non-browser client without Origin header
+
+        clean_origin = origin.rstrip("/")
+        allowed = self.tenant_origins.get(tenant_id, [])
+        if not allowed or "*" in allowed:
+            return True
+        return clean_origin in allowed
 
     def get_or_create_session(
         self,
@@ -337,6 +356,10 @@ class GatewayApp:
         }
         auth_header = headers_dict.get("authorization")
         sig_header = headers_dict.get("x-hub-signature-256")
+        origin_header = headers_dict.get("origin") or headers_dict.get("referer")
+        if origin_header and origin_header.startswith("http"):
+            parsed_origin = urllib.parse.urlparse(origin_header)
+            origin_header = f"{parsed_origin.scheme}://{parsed_origin.netloc}"
 
         # Read request body
         body = bytearray()
@@ -346,6 +369,31 @@ class GatewayApp:
             if not message.get("more_body", False):
                 break
         raw_body = bytes(body)
+
+        # Server-side Origin enforcement on /chat/* and /auth/otp/* (Spec 16.1, 16.2)
+        if path.startswith("/chat/") or path.startswith("/auth/otp/"):
+            tenant_candidate = "demo-shop"
+            if raw_body:
+                try:
+                    bdata = json.loads(raw_body.decode("utf-8"))
+                    tenant_candidate = bdata.get("tenant_id", "demo-shop")
+                except Exception:
+                    pass
+            if not self.is_origin_allowed(tenant_candidate, origin_header):
+                status_code = 403
+                response_body = json.dumps({
+                    "detail": f"Origin '{origin_header}' is not authorized for tenant '{tenant_candidate}'."
+                }).encode("utf-8")
+                await send({
+                    "type": "http.response.start",
+                    "status": status_code,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(response_body)).encode("latin1")),
+                    ]
+                })
+                await send({"type": "http.response.body", "body": response_body})
+                return
 
         # Route matching
         status_code = 404
@@ -395,6 +443,14 @@ class GatewayApp:
                 status_code = 200
                 content_type = "text/html"
                 with open(widget_file, "rb") as f:
+                    response_body = f.read()
+
+        elif path in ("/widget/v1/widget.js", "/widget.js") and method == "GET":
+            widget_js_file = self.static_dir / "widget" / "v1" / "widget.js"
+            if widget_js_file.exists():
+                status_code = 200
+                content_type = "application/javascript; charset=utf-8"
+                with open(widget_js_file, "rb") as f:
                     response_body = f.read()
 
         elif path in ("/desk", "/desk/index.html") and method == "GET":
