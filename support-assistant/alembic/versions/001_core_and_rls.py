@@ -53,6 +53,8 @@ def upgrade() -> None:
         op.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
         op.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+        op.execute("DROP TABLE IF EXISTS refund_requests CASCADE;")
+        op.execute("DROP TABLE IF EXISTS knowledge_chunks CASCADE;")
 
     # 2. Tenants Table
     op.create_table(

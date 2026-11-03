@@ -17,10 +17,12 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import urllib.parse
 import uuid
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from core.models import SessionContext, AuthLevel
@@ -28,6 +30,11 @@ from services.assistant_api.jwt_auth import verify_customer_token
 from services.assistant_api.otp_service import OTPService
 from services.assistant_api.whatsapp_security import WhatsAppSecurity
 from services.worker.orchestrator import WorkerOrchestrator, OrchestratorResponse
+from services.dashboard_api.auth import router as auth_router
+from services.dashboard_api.conversations import router as conversations_router
+from services.dashboard_api.escalations import router as escalations_router
+from services.dashboard_api.knowledge import router as knowledge_router
+from services.dashboard_api.reports import router as reports_router
 
 
 # ============================================================================
@@ -108,6 +115,21 @@ class GatewayApp:
 
         # Session storage: (tenant_id, conv_id) -> SessionContext
         self._session_store: Dict[Tuple[str, str], SessionContext] = {}
+
+        # Mount Dashboard FastAPI Sub-Application
+        self.dashboard_app = FastAPI(title="NovaRetail Master Control API", version="1.0.0")
+        self.dashboard_app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        self.dashboard_app.include_router(auth_router)
+        self.dashboard_app.include_router(conversations_router)
+        self.dashboard_app.include_router(escalations_router)
+        self.dashboard_app.include_router(knowledge_router)
+        self.dashboard_app.include_router(reports_router)
 
     def is_origin_allowed(self, tenant_id: str, origin: Optional[str]) -> bool:
         """
@@ -349,6 +371,17 @@ class GatewayApp:
         query_string = scope.get("query_string", b"").decode("utf-8")
         query_params = dict(urllib.parse.parse_qsl(query_string))
 
+        # Dispatch to Master Control Dashboard FastAPI sub-app if matched
+        if path.startswith((
+            "/desk/auth",
+            "/desk/conversations",
+            "/desk/escalations",
+            "/desk/knowledge",
+            "/desk/reports",
+        )):
+            await self.dashboard_app(scope, receive, send)
+            return
+
         # Extract headers
         headers_dict = {
             k.decode("latin1").lower(): v.decode("latin1")
@@ -437,29 +470,29 @@ class GatewayApp:
             except Exception as e:
                 status_code, response_body = 400, json.dumps({"detail": str(e)}).encode("utf-8")
 
-        elif path in ("/widget", "/widget/index.html") and method == "GET":
+        elif path in ("/widget", "/widget/index.html") and method in ("GET", "HEAD"):
             widget_file = self.static_dir / "widget" / "index.html"
             if widget_file.exists():
                 status_code = 200
                 content_type = "text/html"
                 with open(widget_file, "rb") as f:
-                    response_body = f.read()
+                    response_body = f.read() if method == "GET" else b""
 
-        elif path in ("/widget/v1/widget.js", "/widget.js") and method == "GET":
+        elif path in ("/widget/v1/widget.js", "/widget.js") and method in ("GET", "HEAD"):
             widget_js_file = self.static_dir / "widget" / "v1" / "widget.js"
             if widget_js_file.exists():
                 status_code = 200
                 content_type = "application/javascript; charset=utf-8"
                 with open(widget_js_file, "rb") as f:
-                    response_body = f.read()
+                    response_body = f.read() if method == "GET" else b""
 
-        elif path in ("/desk", "/desk/index.html") and method == "GET":
+        elif path in ("/desk", "/desk/index.html") and method in ("GET", "HEAD"):
             desk_file = self.static_dir / "desk" / "index.html"
             if desk_file.exists():
                 status_code = 200
                 content_type = "text/html"
                 with open(desk_file, "rb") as f:
-                    response_body = f.read()
+                    response_body = f.read() if method == "GET" else b""
 
         elif path == "/desk/refunds/pending" and method == "GET":
             if self.support_desk_service:

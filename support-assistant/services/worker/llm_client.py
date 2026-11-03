@@ -53,12 +53,12 @@ class GroqLLMClient:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        small_model: str = "llama-3.1-8b-instant",
-        large_model: str = "llama-3.3-70b-versatile"
+        small_model: Optional[str] = None,
+        large_model: Optional[str] = None
     ):
         self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
-        self.small_model = small_model
-        self.large_model = large_model
+        self.small_model = small_model or os.getenv("GROQ_SMALL_MODEL", "llama-3.3-70b-versatile")
+        self.large_model = large_model or os.getenv("GROQ_LARGE_MODEL", "llama-3.3-70b-versatile")
         if AsyncOpenAI and self.api_key:
             self._client = AsyncOpenAI(
                 base_url="https://api.groq.com/openai/v1",

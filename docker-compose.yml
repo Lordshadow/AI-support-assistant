@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # -------------------------------------------------------------
   # 1. PostgreSQL with pgvector & pg_trgm (Unified Data + Vector)
@@ -22,9 +20,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - novaretail-net
 
   # -------------------------------------------------------------
-  # 2. Redis (Cache-Aside, Rate Limiting & Burst Protection)
+  # 2. Redis (Cache-Aside, Rate Limiting & Session Locks)
   # -------------------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -39,9 +39,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - novaretail-net
 
   # -------------------------------------------------------------
-  # 3. NovaRetail Assistant API Gateway & Frontends
+  # 3. NovaRetail Assistant API Gateway & Dashboard Backend
   # -------------------------------------------------------------
   assistant-api:
     build:
@@ -55,11 +57,15 @@ services:
       - POSTGRES_DB=novaretail_db
       - POSTGRES_USER=novaretail_admin
       - POSTGRES_PASSWORD=novaretail_secure_pass
+      - DATABASE_URL=postgresql+asyncpg://novaretail_admin:novaretail_secure_pass@postgres:5432/novaretail_db
+      - DATABASE_SYNC_URL=postgresql+psycopg2://novaretail_admin:novaretail_secure_pass@postgres:5432/novaretail_db
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - WHATSAPP_APP_SECRET=${WHATSAPP_APP_SECRET:-test_whatsapp_secret_9941}
       - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN:-novaretail_verify_token_secure}
+      - STOREFRONT_JWT_SECRET=${STOREFRONT_JWT_SECRET:-novaretail_jwt_secret_key_prod_3819}
+      - RUN_MIGRATIONS=true
     ports:
       - "8000:8000"
     depends_on:
@@ -67,7 +73,112 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - novaretail-net
+
+  # -------------------------------------------------------------
+  # 4. Refund Outbox Worker (Async Safe Payment Disbursement)
+  # -------------------------------------------------------------
+  outbox-worker:
+    build:
+      context: ./support-assistant
+      dockerfile: Dockerfile
+    container_name: novaretail-outbox-worker
+    restart: always
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=novaretail_db
+      - POSTGRES_USER=novaretail_admin
+      - POSTGRES_PASSWORD=novaretail_secure_pass
+      - DATABASE_URL=postgresql+asyncpg://novaretail_admin:novaretail_secure_pass@postgres:5432/novaretail_db
+      - DATABASE_SYNC_URL=postgresql+psycopg2://novaretail_admin:novaretail_secure_pass@postgres:5432/novaretail_db
+      - TENANT_ID=demo-shop
+      - OUTBOX_POLL_INTERVAL=2.0
+      - RUN_MIGRATIONS=false
+    command: ["python", "-m", "services.support_desk.outbox_worker"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import sys; sys.exit(0)'"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      assistant-api:
+        condition: service_healthy
+    networks:
+      - novaretail-net
+
+  # -------------------------------------------------------------
+  # 5. Master Control Dashboard (React SPA + Nginx Reverse Proxy)
+  # -------------------------------------------------------------
+  master-dashboard:
+    build:
+      context: ./master-dashboard
+      dockerfile: Dockerfile
+    container_name: novaretail-master-dashboard
+    restart: always
+    ports:
+      - "5173:80"
+    depends_on:
+      assistant-api:
+        condition: service_healthy
+    networks:
+      - novaretail-net
+
+  # -------------------------------------------------------------
+  # 6. Storefront Backend (SQLite REST API, 100 Products)
+  # -------------------------------------------------------------
+  storefront-backend:
+    build:
+      context: ./ecommerce-app/backend
+    container_name: novaretail-storefront-backend
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 5000
+      DATABASE_PATH: /data/ecommerce.db
+      AUTH_SECRET: ${AUTH_SECRET:-local-docker-secret-change-before-deployment}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+    ports:
+      - "5000:5000"
+    volumes:
+      - storefront-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks:
+      - novaretail-net
+
+  # -------------------------------------------------------------
+  # 7. Storefront Frontend (Next.js 14 App Router)
+  # -------------------------------------------------------------
+  storefront-frontend:
+    build:
+      context: ./ecommerce-app/frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000}
+    container_name: novaretail-storefront-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      storefront-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - novaretail-net
 
 volumes:
   postgres_data:
   redis_data:
+  storefront-data:
+
+networks:
+  novaretail-net:
+    driver: bridge

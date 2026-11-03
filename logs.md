@@ -1065,16 +1065,70 @@
 
 ---
 
-## Master Control Dashboard Project Completion: 100.0% (7 of 7 Phases Completed)
+---
 
-### All Master Control Dashboard Phases Fully Implemented & Verified:
-1. `[Task-13]` Persistence & Row-Level Security (Alembic DDL, RLS, Postgres Port Adapters) (100%)
-2. `[Task-14]` Staff Auth, Argon2id, TOTP MFA, Atomic Approvals & Outbox Worker (100%)
-3. `[Task-15]` Turn Recording, Spec 14.1 Trace, Manager Unmask & R4 Spend Hot-Path (100%)
-4. `[Task-16]` Escalations Queue & Human Takeover Bot-Silencing Gate (100%)
-5. `[Task-17]` Knowledge Version Manifest, Clause Preview, Deletion Guard & Eval Gate (100%)
-6. `[Task-18]` Spec 16.1 Shadow DOM Widget, Server-Side Origin Guard & React Dashboard Frontend (100%)
-7. `[Task-19]` Concurrency Hardening & 10× Load Burst Testing (100%)
+## [Task-20] - Full-Stack Production Containerization (Docker, Multi-Stage Builds, Outbox Daemon & Orchestrated Compose)
+**Timestamp:** 2026-11-03 15:43:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Provide complete production containerization for the entire NovaRetail ecosystem using Docker and Docker Compose.
+- Ensure all services operate in reproducible, isolated, and production-hardened Linux containers:
+  - `postgres`: PostgreSQL 16 with pgvector & pg_trgm extensions and automated schema initialization.
+  - `redis`: Redis 7-alpine for caching, session stores, and rate limiting.
+  - `assistant-api`: Python 3.11 ASGI Gateway & FastAPI Master Control backend with automated startup database migrations (`alembic upgrade head`).
+  - `outbox-worker`: Standalone daemon service continuously polling and processing approved refund requests with transactional row-level leases.
+  - `master-dashboard`: Production multi-stage build (Node 20 build -> Nginx alpine) serving the React SPA with SPA routing and reverse-proxying API calls to `assistant-api`.
+  - `storefront-backend` & `storefront-frontend`: Integrated e-commerce customer store applications.
+
+### Architectural Boundaries & Modularity
+- `support-assistant/services/assistant_api/gateway_app.py`: Route delegation to FastAPI dashboard routers (`/desk/auth`, `/desk/conversations`, `/desk/escalations`, `/desk/knowledge`, `/desk/reports`) with CORS support and HEAD method handling for static asset probes.
+- `support-assistant/services/support_desk/outbox_worker.py`: Added continuous daemon loop with graceful SIGINT/SIGTERM termination for standalone container execution.
+- `support-assistant/requirements.txt`: Comprehensive production dependency pinning (`asyncpg`, `psycopg2-binary`, `sqlalchemy`, `alembic`, `pydantic[email]`, `email-validator`, `argon2-cffi`, `pyotp`, `greenlet`).
+- `support-assistant/entrypoint.sh` & `support-assistant/Dockerfile`: Migration execution before ASGI gateway boot, URL cleaning for raw psycopg2 healthchecks.
+- `master-dashboard/Dockerfile` & `master-dashboard/nginx.conf`: Multi-stage Docker packaging, dual-stack IPv4/IPv6 Nginx listeners, SPA routing, and reverse proxying to `assistant-api:8000`.
+- `docker-compose.yml`: Top-level multi-service orchestration with custom health checks, network isolation, and volume persistence.
+
+### Files Touched
+- `docker-compose.yml` (Modified - 7 services, healthchecks, bridge network)
+- `logs.md` (Modified)
+- `support-assistant/Dockerfile` (Modified - libpq-dev, entrypoint, healthcheck)
+- `support-assistant/entrypoint.sh` (Created - wait-for-postgres and migration runner)
+- `support-assistant/.dockerignore` (Created)
+- `support-assistant/alembic/versions/001_core_and_rls.py` (Modified - idempotent table cleanup)
+- `support-assistant/requirements.txt` (Modified - added asyncpg, psycopg2, email-validator, etc.)
+- `support-assistant/services/assistant_api/gateway_app.py` (Modified - dashboard sub-app mount & HEAD support)
+- `support-assistant/services/support_desk/outbox_worker.py` (Modified - daemon runner loop)
+- `support-assistant/services/worker/llm_client.py` (Modified - configurable Groq model tiers)
+- `master-dashboard/Dockerfile` (Created - multi-stage Node/Nginx)
+- `master-dashboard/nginx.conf` (Created - SPA routing & reverse proxy)
+- `master-dashboard/.dockerignore` (Created)
+- `.dockerignore` (Created)
+
+### Verification & Quality Assurance
+- Automated Unit & Burst Regression:
+  - Command: `python -m unittest discover -s support-assistant/tests`
+  - Outcome: **138/138 tests passed in 10.199s (100.0% success rate)**.
+- Container Build & Orchestration Verification:
+  - `docker compose build`: All images (`assistant-api`, `master-dashboard`, `outbox-worker`, `storefront-backend`, `storefront-frontend`) built successfully.
+  - `docker compose up -d`: All 7 services started and reported healthy:
+    - `novaretail-postgres`: Up (healthy) on `0.0.0.0:5432`
+    - `novaretail-redis`: Up (healthy) on `0.0.0.0:6379`
+    - `novaretail-assistant-api`: Up (healthy) on `0.0.0.0:8000`
+    - `novaretail-outbox-worker`: Up (healthy) in background
+    - `novaretail-master-dashboard`: Up (healthy) on `0.0.0.0:5173`
+    - `novaretail-storefront-backend`: Up (healthy) on `0.0.0.0:5000`
+    - `novaretail-storefront-frontend`: Up (running) on `0.0.0.0:3000`
+  - HTTP Endpoints Verified:
+    - `GET http://localhost:8000/health`: `200 OK` (`{"status": "healthy"}`)
+    - `HEAD http://localhost:8000/widget/v1/widget.js`: `200 OK` (`application/javascript`)
+    - `GET http://localhost:5173/`: `200 OK` (Nginx serving Master Control Dashboard SPA)
+    - `GET http://localhost:5173/desk/stats`: `200 OK` (Nginx reverse proxy to Assistant API)
+    - `GET http://localhost:5000/api`: `200 OK` (ApexStore eCommerce REST API online)
+    - `GET http://localhost:3000/`: `200 OK` (Next.js Storefront Frontend online)
+
+### Git Commit
+- `feat(docker): containerize full ecosystem with multi-stage builds, outbox daemon, and compose orchestration`
 
 
 

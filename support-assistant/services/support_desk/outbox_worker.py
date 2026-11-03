@@ -186,3 +186,55 @@ class OutboxPaymentWorker:
                 await self.process_claimed_refund(claimed.refund_id, session)
                 processed_count += 1
         return processed_count
+
+
+async def run_worker_daemon(poll_interval: float = 2.0, tenant_id: str = "demo-shop") -> None:
+    """Continuous outbox payment worker daemon with graceful shutdown."""
+    import asyncio
+    import logging
+    import signal
+    from adapters.mockshop import MockOrderAdapter, MockRefundAdapter
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logger = logging.getLogger("outbox_worker")
+    logger.info(f"Starting OutboxPaymentWorker daemon for tenant '{tenant_id}' (poll interval: {poll_interval}s)...")
+
+    orders = MockOrderAdapter()
+    refund_port = MockRefundAdapter(orders)
+    worker = OutboxPaymentWorker(refund_port=refund_port, tenant_id=tenant_id)
+
+    stop_event = asyncio.Event()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.add_signal_handler(sig, stop_event.set)
+        except (NotImplementedError, AttributeError):
+            pass  # Windows compatibility fallback
+
+    while not stop_event.is_set():
+        try:
+            processed = await worker.run_once()
+            if processed > 0:
+                logger.info(f"Processed {processed} approved refund(s) from transactional outbox.")
+            else:
+                await asyncio.sleep(poll_interval)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Worker iteration error: {e}", exc_info=True)
+            await asyncio.sleep(poll_interval)
+
+    logger.info("OutboxPaymentWorker daemon stopped cleanly.")
+
+
+if __name__ == "__main__":
+    import asyncio
+    import os
+    tenant = os.getenv("TENANT_ID", "demo-shop")
+    interval = float(os.getenv("OUTBOX_POLL_INTERVAL", "2.0"))
+    try:
+        asyncio.run(run_worker_daemon(poll_interval=interval, tenant_id=tenant))
+    except (KeyboardInterrupt, SystemExit):
+        pass
+
