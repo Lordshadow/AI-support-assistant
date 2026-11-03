@@ -799,7 +799,7 @@
 
 ## [Task-15] - Master Control Dashboard Phase 3: Turn Recording, R5 Trace & R4 Spend Hot-Path
 **Timestamp:** 2026-11-03 14:07:00 IST  
-**Status:** IN-PROGRESS  
+**Status:** COMPLETED & VERIFIED  
 
 ### Objective & Rationale ("Why")
 - Implement Component 4 of the Master Control Dashboard per approved Implementation Plan (v4):
@@ -828,14 +828,27 @@
 - `support-assistant/services/dashboard_api/reports.py` (Created)
 - `support-assistant/tests/test_r5_trace_and_unmask.py` (Created)
 - `support-assistant/tests/test_spend_ledger_and_cap_gate.py` (Created)
+- `support-assistant/tests/test_staff_auth_mfa_sessions.py` (Modified - isolated step-up cache)
+- `support-assistant/tests/test_worker_orchestrator.py` (Modified - driven with asyncio loop)
 
 ### Verification & Quality Assurance
-- Verification plan:
-  - Verify every turn writes all Spec 14.1 columns to `conversation_turns`.
-  - Verify unmask endpoint requires Manager role and active Step-up; verify non-manager is blocked with 403; verify audit event is written.
-  - Verify spend cap gate: set spend to ₹2,500; verify worker skips LLM and returns deterministic fallback with handoff.
-  - Verify 80% spend alert dispatch.
-  - Verify reports aggregation: deflection rate, latency percentiles, and cost per turn.
+- Automated tests executed:
+  - `python -m unittest support-assistant/tests/test_r5_trace_and_unmask.py`:
+    - Verified all Spec 14.1 trace columns populated on turn record.
+    - Verified DPDP scrubbing of phones and emails in `user_input_masked`.
+    - Verified audited transcript and turn trace reads.
+    - Verified Manager-only + Step-up unmask workflow: Executive blocked with 403; Manager without step-up blocked with 403; Manager with step-up succeeds and writes immutable audit record. Outcome: **3/3 passed**.
+  - `python -m unittest support-assistant/tests/test_spend_ledger_and_cap_gate.py`:
+    - Verified INR token cost calculation for Llama 3 70B and 8B.
+    - Verified hot-path spend cap gate: daily cap of ₹2,500 skips LLM, returns deterministic menu, routes to handoff.
+    - Verified monthly 95% cap gate.
+    - Verified Reports API spend meters and customer metrics. Outcome: **3/3 passed**.
+  - Full Regression Suite:
+    - Command: `python -m unittest discover -s support-assistant/tests`
+    - Outcome: **119/119 passed in 7.617s (0 regressions)**.
+
+### Git Commit
+- `3852633 feat(tracing,spend): implement spec 14.1 turn recording, r5 trace viewer, and r4 hot-path spend cap enforcement`
 
 ### Next Planned Task (Awaiting User Permission):
 - [ ] Task ID: Task-16: Master Control Dashboard Phase 4: Escalations Queue & Bot Silencing
