@@ -48,6 +48,17 @@ class CacheService:
             self._store.pop(k, None)
         return len(to_del)
 
+    def invalidate_tenant(self, tenant_id: str) -> int:
+        """Invalidate all cached keys for a given tenant upon policy/catalog promotion or rollback."""
+        prefix = f"{tenant_id}:"
+        to_del = [k for k in self._store if k.startswith(prefix) or f":{tenant_id}:" in k]
+        # In single-tenant mode or default mock, clear general knowledge/product caches
+        if not to_del:
+            to_del = [k for k in self._store if k.startswith("faq:") or k.startswith("prod:") or k.startswith("policy:")]
+        for k in to_del:
+            self._store.pop(k, None)
+        return len(to_del)
+
     # -------------------------------------------------------------
     # Standard Spec Key Builders (Section 11.1)
     # -------------------------------------------------------------

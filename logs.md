@@ -896,7 +896,63 @@
 - `a4d4e2e feat(escalations): implement escalations queue, atomic claim race protection, and bot silencing gate`
 
 ### Next Planned Task (Awaiting User Permission):
-- [ ] Task ID: Task-17: Master Control Dashboard Phase 5: Knowledge Version Manifest & Eval Gate
+- [x] Task ID: Task-17: Master Control Dashboard Phase 5: Knowledge Version Manifest & Eval Gate
+
+
+---
+
+## [Task-17] - Master Control Dashboard Phase 5: Knowledge Version Manifest & Eval Gate
+**Timestamp:** 2026-11-03 14:35:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Implement Component 6 of the Master Control Dashboard per approved Implementation Plan (v4):
+  - Spec 5.3, 16.6 & 17 Knowledge Staging & Eval Gate: replace brittle in-place chunk updates with an immutable, content-addressed version manifest (`knowledge_versions`, `knowledge_chunks`, `knowledge_version_chunks`).
+  - Safe Policy Ingestion: PDF/MD/TXT clause extraction with visual clause preview and confirmed policy values form (`return_window_days`, `excluded_categories`, `auto_refund_limit_inr`).
+  - Safe Catalog Ingestion & Deletion Guard: background ingestion job tracking with partial unique index (1 active job per tenant) and automatic abort guard if catalog items drop $> 20\%$.
+  - Pre-Promotion Eval Gate: automated pre-promotion eval checking deterministic rules (100% pass) and fuzzy QA ($\ge 90\%$), Manager override with step-up MFA and written justification, atomic pointer promotion (`tenants.active_policy_version`), cache clearing, and one-click rollback.
+
+### Architectural Boundaries & Modularity
+- **Knowledge Manifest Engine (`support-assistant/ingestion/manifest_engine.py`)**:
+  - Content-addressing: `sha256(tenant_id|source|product_id|text|model|chunker)`. Deduplicates identical chunks across versions.
+  - Safe policy extraction rejecting unmapped glyph ratios $> 30\%$ or scanned PDFs without text layers.
+  - Draft policy creation with clause preview.
+  - Catalog ingest runner with $>20\%$ drop protection.
+  - Automated eval runner evaluating draft versions against confirmed policy expectations.
+  - Single-transaction pointer flip and one-click rollback.
+- **Knowledge API Router (`support-assistant/services/dashboard_api/knowledge.py`)**:
+  - Endpoints: `POST /policy/upload`, `POST /policy/draft`, `POST /catalog/sync`, `GET /jobs/{job_id}`, `GET /versions`, `GET /versions/{version_id}`, `POST /versions/{version_id}/eval`, `POST /versions/{version_id}/promote`, `POST /rollback`.
+- **Cache Invalidation (`support-assistant/core/router/cache.py`)**:
+  - Added `invalidate_tenant(tenant_id)` to flush tenant-scoped knowledge and product caches upon version promotion or rollback.
+
+### Files Touched
+- `support-assistant/ingestion/manifest_engine.py` (Created)
+- `support-assistant/services/dashboard_api/knowledge.py` (Created)
+- `support-assistant/core/router/cache.py` (Modified - added `invalidate_tenant`)
+- `support-assistant/requirements.txt` (Modified - added `pypdf>=5.0.0`)
+- `support-assistant/tests/test_knowledge_manifest_and_eval_gate.py` (Created)
+
+### Verification & Quality Assurance
+- Automated Test Suite:
+  - `python -m unittest support-assistant/tests/test_knowledge_manifest_and_eval_gate.py`:
+    - `test_content_addressed_chunk_deduplication`: Verified deterministic chunk hashing, whitespace normalization, and database chunk reuse across drafts.
+    - `test_policy_upload_markdown_and_glyph_rejection`: Verified clause preview generation for Markdown, rejection of documents with $>30\%$ corrupted glyphs, rejection of empty files, and rejection of scanned/empty PDFs.
+    - `test_confirmed_policy_values_form_and_draft_creation`: Verified draft version manifest captures confirmed values (`return_window_days=45`, `auto_refund_limit_inr=3000`).
+    - `test_catalog_ingestion_and_deletion_guard_abort`: Verified $30\%$ catalog drop aborts sync, fails job, and protects existing active index. Verified $10\%$ drop completes successfully.
+    - `test_active_ingestion_job_concurrency_conflict`: Verified 409 Conflict when attempting to start an ingestion job while one is already running.
+    - `test_pre_promotion_eval_gate_and_manager_override`: Verified eval gate blocks failing version from promotion; Executive blocked with 403; Manager without step-up blocked with 403; Manager without reason blocked with 400; Manager with step-up and written justification succeeds, flips pointer, and logs `knowledge_promotion_override` audit event.
+    - `test_atomic_promotion_and_one_click_rollback`: Verified promotion of v1, promotion of v2 archiving v1, and rollback restoring v1, flipping `tenants.active_policy_version`, and recording audit event.
+    - Outcome: **7/7 passed in 1.961s**.
+- Full Regression Test:
+  - Command: `python -m unittest discover -s support-assistant/tests`
+  - Outcome: **130/130 passed in 18.015s (0 regressions)**.
+
+### Git Commit
+- `Pending commit for Phase 5`
+
+### Next Planned Task (Awaiting User Permission):
+- [ ] Task ID: Task-18: Master Control Dashboard Phase 6: Website Widget (Spec 16.1, 16.2) & React Dashboard Frontend
+
 
 
 
