@@ -677,7 +677,7 @@
 
 ## [Task-13] - Master Control Dashboard Phase 1: Persistence & Row-Level Security (RLS)
 **Timestamp:** 2026-11-03 13:13:00 IST  
-**Status:** IN-PROGRESS  
+**Status:** COMPLETED & VERIFIED  
 
 ### Objective & Rationale ("Why")
 - Implement Component 1 of the Master Control Dashboard per approved Implementation Plan (v4):
@@ -689,21 +689,23 @@
 ### Architectural Boundaries & Modularity
 - **Alembic Configuration (`support-assistant/alembic.ini`, `support-assistant/alembic/`)**:
   - `versions/001_core_and_rls.py`: DDL defining `tenants`, `staff_users`, `staff_tenant_memberships`, `staff_sessions`, `tenant_policy_configs`, `refund_requests`, `audit_events`, `conversation_sessions`, `conversation_turns`, `turn_raw`, `spend_ledger`, `escalations`, `knowledge_versions`, `knowledge_chunks`, `knowledge_version_chunks`, `ingestion_jobs`.
-  - Migration helper applying RLS across all tenant-scoped tables.
+  - Migration helper applying RLS across all 13 tenant-scoped tables (`ENABLE` + `FORCE` + `tenant_isolation_policy`).
   - Partial unique index on `refund_requests (tenant_id, order_id, item_ref) WHERE state IN ('pending_approval', 'approved', 'processed')` preventing duplicate concurrent refunds.
-- **Database Session Manager (`support-assistant/db/session.py`)**:
-  - Async & Sync engines supporting PostgreSQL (and SQLite fallback for fast isolated tests).
-  - `get_db_session(tenant_id: str)` automatically sets `app.tenant_id` session configuration.
+  - Partial unique index on `ingestion_jobs (tenant_id, source_type) WHERE status IN ('queued', 'running')` enforcing single active ingestion job per tenant.
+- **Database Session Manager (`support-assistant/db/session.py`, `support-assistant/db/models.py`)**:
+  - Async & Sync engines supporting PostgreSQL (and SQLite in-memory fallback for fast isolated tests).
+  - `get_async_session(tenant_id: str)` automatically sets `SELECT set_config('app.tenant_id', :tenant_id, true)` in the transaction.
 - **Postgres Adapters (`support-assistant/adapters/postgres/`)**:
-  - `order_repository.py`: implements `OrderPort`.
-  - `catalog_repository.py`: implements `CatalogPort`.
-  - `refund_repository.py`: implements `RefundPort`.
+  - `order_repository.py`: implements `OrderPort` with customer ownership checks and shipping tracking timeline.
+  - `catalog_repository.py`: implements `CatalogPort` with hybrid product lookup, live pricing, specifications, and filtered RAG on `(tenant_id, product_id)`.
+  - `refund_repository.py`: implements `RefundPort` with idempotency deduplication, auto-refund limit routing (₹2,000 threshold), and staff decision recording.
 
 ### Files Touched
 - `support-assistant/alembic.ini` (Created)
 - `support-assistant/alembic/env.py` (Created)
 - `support-assistant/alembic/script.py.mako` (Created)
 - `support-assistant/alembic/versions/001_core_and_rls.py` (Created)
+- `support-assistant/db/models.py` (Created)
 - `support-assistant/db/session.py` (Created)
 - `support-assistant/adapters/postgres/__init__.py` (Created)
 - `support-assistant/adapters/postgres/order_repository.py` (Created)
@@ -712,11 +714,21 @@
 - `support-assistant/tests/test_alembic_and_rls.py` (Created)
 
 ### Verification & Quality Assurance
-- Verification plan:
-  - Verify Alembic migrations generate up/down SQL and valid syntax.
-  - Test RLS policies presence and app role privileges.
-  - Test repository operations through existing ports.
-  - Verify regression on all 96 existing tests.
+- Automated tests executed:
+  - `python -m unittest support-assistant/tests/test_alembic_and_rls.py`:
+    - `test_alembic_revisions_and_heads`: Verified Alembic recognizes `001_core_and_rls` as current head.
+    - `test_offline_sql_generation_contains_all_rls_and_security_controls`: Verified DDL generation for all 16 tables, 2 partial unique indexes, RLS enablement, force RLS, tenant isolation policy, and `novaretail_app` role privilege restriction on `audit_events`.
+    - `test_offline_downgrade_sql_generation`: Verified clean rollback SQL dropping RLS policies, unforcing RLS, and dropping tables in reverse dependency order.
+    - `test_order_repository_and_tracking`: Verified ownership enforcement, customer authorization, and multi-stage tracking generation.
+    - `test_refund_repository_idempotency_and_routing`: Verified auto-refund for <= ₹2,000, escalation routing to `pending_approval` for > ₹2,000, idempotency key deduplication, and staff decision recording.
+    - `test_catalog_repository_search_and_specs`: Verified product lookup by alias, specs query, live price retrieval, and category filtering.
+    - Outcome: **6/6 passed in 0.414s**.
+  - Full Regression Test:
+    - Command: `python -m unittest discover -s support-assistant/tests`
+    - Outcome: **102/102 passed in 0.788s (0 regressions)**.
+
+### Git Commit
+- `5c4c2c9 feat(db): add alembic migrations with postgresql rls and adapters`
 
 ### Next Planned Task (Awaiting User Permission):
 - [ ] Task ID: Task-14: Master Control Dashboard Phase 2: Staff Auth, Approvals & Payment Outbox
