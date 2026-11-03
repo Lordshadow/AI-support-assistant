@@ -1010,7 +1010,7 @@
   - Outcome: **134/134 passed in 18.276s (0 regressions)**.
 
 ### Git Commit
-- `Pending commit for Phase 6`
+- `a472228 feat(widget-and-frontend): implement Spec 16.1 Shadow DOM widget, gateway origin enforcement, and React Master Control Dashboard`
 
 ### Next Planned Task (Awaiting User Permission):
 - [ ] Task ID: Task-19: Master Control Dashboard Phase 7: Hardening & 10× Load Burst
