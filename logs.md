@@ -731,5 +731,55 @@
 - `5c4c2c9 feat(db): add alembic migrations with postgresql rls and adapters`
 
 ### Next Planned Task (Awaiting User Permission):
-- [ ] Task ID: Task-14: Master Control Dashboard Phase 2: Staff Auth, Approvals & Payment Outbox
+- [x] Task ID: Task-14: Master Control Dashboard Phase 2: Staff Auth, Approvals & Payment Outbox
+
+
+---
+
+## [Task-14] - Master Control Dashboard Phase 2: Staff Auth, Approvals & Payment Outbox
+**Timestamp:** 2026-11-03 13:30:30 IST  
+**Status:** IN-PROGRESS  
+
+### Objective & Rationale ("Why")
+- Implement Component 2 and Component 3 of the Master Control Dashboard per approved Implementation Plan (v4):
+  - Spec 15.1.8 Staff Identity & RBAC: per-person accounts (`staff_users`), Argon2id hashing, RFC 6238 TOTP MFA, opaque server-side sessions in PostgreSQL (`staff_sessions`), double-submit CSRF, step-up authentication (5-minute TTL), and role separation (`executive`, `manager`, `admin`).
+  - R3 & Spec 10 Atomic Single-Transaction Approval: conditional SQL `UPDATE ... WHERE refund_id=:id AND state='pending_approval'` combined with `audit_events` insert in a single transaction, preventing check-then-act races and double approvals.
+  - Approved Rows Outbox Worker: daemon leasing approved refunds with `FOR UPDATE SKIP LOCKED` and 120s lease timeout, idempotency key reconciliation on payment timeout, and customer notification dispatch.
+
+### Architectural Boundaries & Modularity
+- **Staff Auth & Session Service (`support-assistant/services/dashboard_api/auth.py`)**:
+  - Constant-time Argon2id password verification and pyotp TOTP MFA.
+  - Server-side session store with `HttpOnly`, `SameSite=Strict` cookie and double-submit CSRF token.
+  - Step-up re-authentication endpoint for high-risk operations (refunds > ₹5,000, policy limit changes, PII unmasking).
+  - RBAC dependency enforcing strict role boundaries (`admin` cannot approve refunds or read conversations; `executive` cannot change money rules or unmask PII).
+- **Atomic Refund State Machine (`support-assistant/core/refund_state_machine.py`)**:
+  - Single-transaction atomic approval and rejection.
+  - Request-time return window evaluation (prevents queue delays from unfairly rejecting customer refunds).
+  - Step-up validation for refunds > ₹5,000.
+- **Payment Outbox Worker Daemon (`support-assistant/services/support_desk/outbox_worker.py`)**:
+  - Background worker leasing approved refunds via `FOR UPDATE SKIP LOCKED`.
+  - Payment dispatch with idempotency key. Ambiguous network timeout triggers status lookup before retry; never blindly marks failed.
+  - Channel notification with WhatsApp 24-hour window template guard.
+
+### Files Touched
+- `support-assistant/services/dashboard_api/__init__.py` (Created)
+- `support-assistant/services/dashboard_api/auth.py` (Created)
+- `support-assistant/services/dashboard_api/dependencies.py` (Created)
+- `support-assistant/core/refund_state_machine.py` (Created)
+- `support-assistant/services/support_desk/outbox_worker.py` (Created)
+- `support-assistant/tests/test_staff_auth_mfa_sessions.py` (Created)
+- `support-assistant/tests/test_refund_concurrency_race.py` (Created)
+- `support-assistant/tests/test_outbox_worker_and_reconciliation.py` (Created)
+
+### Verification & Quality Assurance
+- Verification plan:
+  - Test Argon2id hashing, TOTP code verification, session generation, and CSRF protection.
+  - Test RBAC matrix: verify Admin is blocked from approving refunds and reading traces.
+  - Test Step-up authentication requirement for refunds > ₹5,000.
+  - Concurrency test: simulate 10 concurrent requests to approve the same pending refund; verify exactly 1 succeeds and 9 return 409 Conflict.
+  - Test Outbox worker: lease timeouts, payment timeout reconciliation by idempotency key, and WhatsApp template selection.
+
+### Next Planned Task (Awaiting User Permission):
+- [ ] Task ID: Task-15: Master Control Dashboard Phase 3: Turn Recording, R5 Trace & R4 Spend Hot-Path
+
 
