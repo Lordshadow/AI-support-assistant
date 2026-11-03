@@ -738,7 +738,7 @@
 
 ## [Task-14] - Master Control Dashboard Phase 2: Staff Auth, Approvals & Payment Outbox
 **Timestamp:** 2026-11-03 13:30:30 IST  
-**Status:** IN-PROGRESS  
+**Status:** COMPLETED & VERIFIED  
 
 ### Objective & Rationale ("Why")
 - Implement Component 2 and Component 3 of the Master Control Dashboard per approved Implementation Plan (v4):
@@ -747,7 +747,7 @@
   - Approved Rows Outbox Worker: daemon leasing approved refunds with `FOR UPDATE SKIP LOCKED` and 120s lease timeout, idempotency key reconciliation on payment timeout, and customer notification dispatch.
 
 ### Architectural Boundaries & Modularity
-- **Staff Auth & Session Service (`support-assistant/services/dashboard_api/auth.py`)**:
+- **Staff Auth & Session Service (`support-assistant/services/dashboard_api/auth.py`, `dependencies.py`)**:
   - Constant-time Argon2id password verification and pyotp TOTP MFA.
   - Server-side session store with `HttpOnly`, `SameSite=Strict` cookie and double-submit CSRF token.
   - Step-up re-authentication endpoint for high-risk operations (refunds > ₹5,000, policy limit changes, PII unmasking).
@@ -772,12 +772,24 @@
 - `support-assistant/tests/test_outbox_worker_and_reconciliation.py` (Created)
 
 ### Verification & Quality Assurance
-- Verification plan:
-  - Test Argon2id hashing, TOTP code verification, session generation, and CSRF protection.
-  - Test RBAC matrix: verify Admin is blocked from approving refunds and reading traces.
-  - Test Step-up authentication requirement for refunds > ₹5,000.
-  - Concurrency test: simulate 10 concurrent requests to approve the same pending refund; verify exactly 1 succeeds and 9 return 409 Conflict.
-  - Test Outbox worker: lease timeouts, payment timeout reconciliation by idempotency key, and WhatsApp template selection.
+- Automated tests executed:
+  - `python -m unittest support-assistant/tests/test_staff_auth_mfa_sessions.py`:
+    - Argon2id password verification, TOTP validation, full login & MFA handshake, cookie generation, CSRF rejection, and role matrix separation (Admin blocked from refunds; Executive blocked from money rules; Manager step-up validated). Outcome: **4/4 passed**.
+  - `python -m unittest support-assistant/tests/test_refund_concurrency_race.py`:
+    - Verified single-transaction approval and audit insertion.
+    - Double-approve concurrency race: 10 concurrent requests executed against the exact same refund. Result: Exactly 1 approval succeeded (200 OK) and exactly 9 failed with 409 Conflict. Exactly 1 audit record written.
+    - Step-up requirement for refunds > ₹5,000 verified. Outcome: **3/3 passed**.
+  - `python -m unittest support-assistant/tests/test_outbox_worker_and_reconciliation.py`:
+    - Verified lease acquisition with 120s timeout.
+    - Verified recovery from simulated worker crash via lease expiration.
+    - Verified network timeout on payment API calls `query_payment_status` and backs off with retry count without marking `failed`.
+    - Verified WhatsApp notifications outside 24h window select pre-approved Meta template. Outcome: **4/4 passed**.
+  - Full Regression Suite:
+    - Command: `python -m unittest discover -s support-assistant/tests`
+    - Outcome: **113/113 passed in 1.285s (0 regressions)**.
+
+### Git Commit
+- `a15b094 feat(auth,refunds): implement staff auth, rbac, atomic refund approvals and payment outbox worker`
 
 ### Next Planned Task (Awaiting User Permission):
 - [ ] Task ID: Task-15: Master Control Dashboard Phase 3: Turn Recording, R5 Trace & R4 Spend Hot-Path
