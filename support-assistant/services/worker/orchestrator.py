@@ -18,6 +18,7 @@ from services.mcp_servers.dispatcher import MCPToolDispatcher
 from services.worker.llm_client import LLMClient, MockLLMClient, ToolCall
 from services.worker.spend_manager import spend_manager
 from services.worker.turn_recorder import TurnRecorder
+from services.worker.escalation_guard import escalation_guard
 
 
 @dataclass
@@ -167,6 +168,42 @@ class WorkerOrchestrator:
                 route_type="spend_capped",
                 language=lang,
                 model_used="spend-cap-gate",
+                tools_called=[],
+                latency_ms=latency,
+                requires_action="handoff",
+                trace_id=turn_id
+            )
+
+        # 5c. Bot Silencing Gate (Spec 5.2, 16.4 Human Takeover)
+        is_silenced, esc_state = await escalation_guard.is_bot_silenced(ctx.tenant_id, ctx.conv_id)
+        if is_silenced:
+            silenced_reply = (
+                "A support executive is currently handling your request. "
+                "Please wait while our team assists you directly."
+            )
+            latency = round((time.perf_counter() - start_time) * 1000, 2)
+            try:
+                turn_id = await TurnRecorder.record_turn(
+                    tenant_id=ctx.tenant_id,
+                    conv_id=ctx.conv_id,
+                    customer_id=ctx.customer_id or "anonymous",
+                    user_input_raw=user_message,
+                    assistant_response_raw=silenced_reply,
+                    intent="bot_silenced_human_takeover",
+                    latency_ms=int(latency),
+                    tokens_prompt=0,
+                    tokens_completion=0,
+                    channel=ctx.channel,
+                    handoff_state="assigned" if esc_state == "assigned" else "open"
+                )
+            except Exception:
+                turn_id = None
+
+            return OrchestratorResponse(
+                reply=silenced_reply,
+                route_type="bot_silenced",
+                language=lang,
+                model_used="bot-silencer-gate",
                 tools_called=[],
                 latency_ms=latency,
                 requires_action="handoff",

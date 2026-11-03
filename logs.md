@@ -851,7 +851,46 @@
 - `3852633 feat(tracing,spend): implement spec 14.1 turn recording, r5 trace viewer, and r4 hot-path spend cap enforcement`
 
 ### Next Planned Task (Awaiting User Permission):
-- [ ] Task ID: Task-16: Master Control Dashboard Phase 4: Escalations Queue & Bot Silencing
+- [x] Task ID: Task-16: Master Control Dashboard Phase 4: Escalations Queue & Bot Silencing
+
+
+---
+
+## [Task-16] - Master Control Dashboard Phase 4: Escalations Queue & Bot Silencing
+**Timestamp:** 2026-11-03 14:18:00 IST  
+**Status:** IN-PROGRESS  
+
+### Objective & Rationale ("Why")
+- Implement Component 5 of the Master Control Dashboard per approved Implementation Plan (v4):
+  - Spec 5.2 & 16.4 Human Escalation Queue: dedicated `escalations` table for customer tickets requiring human intervention.
+  - Atomic Claim Race Protection: single-transaction conditional update `UPDATE escalations SET state='assigned', assigned_to=:staff WHERE esc_id=:id AND state='open'` with simultaneous audit logging.
+  - Human Takeover Bot Silencing: when an escalation ticket is `open` or `assigned`, the chat worker silences the AI bot completely, making zero model calls and responding with a fixed support template.
+
+### Architectural Boundaries & Modularity
+- **Escalations API (`support-assistant/services/dashboard_api/escalations.py`)**:
+  - Filtered ticket listing (`open`, `assigned`, `resolved`) with wait times.
+  - Concurrency-safe atomic ticket claim endpoint returning 409 Conflict if already claimed.
+  - Ticket resolution endpoint with mandatory documentation note ($\ge 10$ chars) and audit logging.
+- **Bot Silencing Gate in Orchestrator (`support-assistant/services/worker/orchestrator.py`, `escalation_guard.py`)**:
+  - Pre-LLM check on active escalation status for the customer session.
+  - Bypasses LLM when ticket is active, preserving conversation context for human executive.
+
+### Files Touched
+- `support-assistant/services/dashboard_api/escalations.py` (Created)
+- `support-assistant/services/worker/escalation_guard.py` (Created)
+- `support-assistant/services/worker/orchestrator.py` (Modified)
+- `support-assistant/tests/test_escalations_and_bot_silencing.py` (Created)
+
+### Verification & Quality Assurance
+- Verification plan:
+  - Test escalations listing and filtering.
+  - Concurrency test: simulate 5 executives claiming the same open ticket; verify exactly 1 succeeds and 4 receive 409 Conflict.
+  - Test bot silencing: customer sends message while ticket is open; verify LLM is not called and fixed human takeover template is returned.
+  - Test resolution: resolving escalation clears handoff state and allows normal interactions.
+
+### Next Planned Task (Awaiting User Permission):
+- [ ] Task ID: Task-17: Master Control Dashboard Phase 5: Knowledge Version Manifest & Eval Gate
+
 
 
 
