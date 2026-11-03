@@ -572,3 +572,152 @@
 9. `[Task-08]` Gateway & WhatsApp Channel Webhooks (100%)
 10. `[Task-09]` Comprehensive Pytest & Adversarial Red-Team Suite (100%)
 11. `[Task-10]` Support Desk Supervisor Dashboard, Customer Web Widget & Production Packaging (100%)
+
+
+---
+
+## [Task-11] - Full-Stack eCommerce Platform (100 Products, Next.js, React, SQLite REST API)
+**Timestamp:** 2026-11-02 18:47:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Build a complete, functional e-commerce website with 100 products across 8 realistic departments using Next.js, React, and SQLite in a dedicated `ecommerce-app/` folder.
+- Incorporate comprehensive features derived from modern 2026 e-commerce benchmarks (predictive live search, faceted multi-attribute filtering, high-converting PDP galleries, urgent stock badges, reviews engine, slide-over cart drawer, promo code discounts, streamlined multi-step checkout, atomic inventory decrements, and real-time order tracking).
+- Enforce strict separation between frontend and backend directories (`ecommerce-app/frontend/` and `ecommerce-app/backend/`).
+
+### Architectural Boundaries & Modularity
+- **Backend Directory (`ecommerce-app/backend/`)**:
+  - `src/db/database.js`: Zero-dependency native SQLite database via Node's `node:sqlite` (`DatabaseSync`), enforcing ACID transactions and indexed lookups.
+  - `src/db/seed.js`: Deterministic seeder populating 100 products, 8 categories, customer reviews, and promotional discount codes.
+  - `src/server.js`: Clean REST API exposing endpoints for product search/facets, single product details with reviews, category counts, promo validation, atomic order creation with inventory decrement, review submissions, and order tracking.
+- **Frontend Directory (`ecommerce-app/frontend/`)**:
+  - Next.js 14 App Router with React 18, Tailwind CSS, and Lucide React.
+  - `context/CartContext.js` & `context/WishlistContext.js`: LocalStorage-persisted application states.
+  - Reusable presentation components: `Navbar`, `Footer`, `ProductCard`, `CartDrawer`, `FilterSidebar`, and `Toast`.
+  - Routes: `/` (catalog & facets), `/product/[id]` (PDP), `/cart` (full cart), `/checkout` (checkout), `/order-confirmation/[id]` (receipt & tracking), `/wishlist` (saved items), and `/orders` (order lookup).
+- **Launcher Scripts**: `start.bat` and `start.ps1` for one-click startup of both services.
+
+### Files Touched
+- `ecommerce-app/backend/package.json` (Created - Backend metadata and scripts)
+- `ecommerce-app/backend/src/db/database.js` (Created - SQLite schema & connection)
+- `ecommerce-app/backend/src/db/seed.js` (Created - 100 products, categories, coupons, and reviews seeder)
+- `ecommerce-app/backend/src/server.js` (Created - REST API server with CORS and error handling)
+- `ecommerce-app/frontend/package.json` (Created - Next.js, React, Tailwind CSS, Lucide icons)
+- `ecommerce-app/frontend/next.config.js` (Created - Unsplash image domains config)
+- `ecommerce-app/frontend/tailwind.config.js` (Created - Custom styling tokens)
+- `ecommerce-app/frontend/postcss.config.js` (Created - PostCSS configuration)
+- `ecommerce-app/frontend/app/globals.css` (Created - Tailwind directives and custom scrollbars)
+- `ecommerce-app/frontend/app/layout.js` (Created - Providers, global header, drawer, toast, footer)
+- `ecommerce-app/frontend/app/page.js` (Created - Hero banner, category pills, faceted search, 100-product grid)
+- `ecommerce-app/frontend/app/product/[id]/page.js` (Created - Gallery, specs, review submission form, related items)
+- `ecommerce-app/frontend/app/cart/page.js` (Created - Full cart breakdown and coupon validation)
+- `ecommerce-app/frontend/app/checkout/page.js` (Created - Shipping, delivery method, payment, and order submission)
+- `ecommerce-app/frontend/app/order-confirmation/[id]/page.js` (Created - Receipt and 4-step timeline tracker)
+- `ecommerce-app/frontend/app/wishlist/page.js` (Created - Wishlist manager with move-to-cart)
+- `ecommerce-app/frontend/app/orders/page.js` (Created - Live order status lookup)
+- `ecommerce-app/frontend/components/Navbar.js` (Created - Live predictive search, badge counters, navigation)
+- `ecommerce-app/frontend/components/Footer.js` (Created - Trust pillars, newsletter discount, legal links)
+- `ecommerce-app/frontend/components/ProductCard.js` (Created - Hover zoom, urgency badges, rating, wishlist toggle)
+- `ecommerce-app/frontend/components/CartDrawer.js` (Created - Slide-over drawer with free shipping progress bar)
+- `ecommerce-app/frontend/components/FilterSidebar.js` (Created - Categories, price slider, rating, stock filters)
+- `ecommerce-app/frontend/components/Toast.js` (Created - Non-intrusive notification alerts)
+- `ecommerce-app/frontend/context/CartContext.js` (Created - Cart state & coupon calculation engine)
+- `ecommerce-app/frontend/context/WishlistContext.js` (Created - Wishlist persistence)
+- `ecommerce-app/start.bat` (Created - One-click CMD launcher)
+- `ecommerce-app/start.ps1` (Created - One-click PowerShell launcher)
+- `ecommerce-app/README.md` (Created - Comprehensive technical documentation and API reference)
+
+### Verification & Quality Assurance
+- **Database Seeder**: `node ecommerce-app/backend/src/db/seed.js` &rarr; 100 products, 8 categories, 4 coupons, and reviews successfully inserted into SQLite.
+- **SQLite Data Integrity Verification**: Queried product counts, category groupings, and JSON fields via in-process SQLite driver with zero defects.
+- **Frontend Production Build**: `npm run build` in `ecommerce-app/frontend/` &rarr; **Compiled successfully with 0 errors across all 8 static and dynamic routes**.
+
+### Next Planned Task (Awaiting User Permission):
+- [ ] Task ID: Standalone live testing or additional custom feature extensions upon request.
+
+
+---
+
+## [Task-12] - Integration of Embedded AI Shopping & Support Assistant
+**Timestamp:** 2026-11-02 18:57:00 IST  
+**Status:** COMPLETED & VERIFIED  
+
+### Objective & Rationale ("Why")
+- Embed an intelligent AI Assistant directly into the full-stack e-commerce site to assist customers with grounded product recommendations, instant order lookup, discount discovery, and return policy answers.
+- Ensure the AI engine is deterministic, responsive, and grounded strictly in the 100 SQLite products, active orders, and coupons database.
+
+### Architectural Boundaries & Modularity
+- **Backend AI Engine (`POST /api/ai/chat`) in `ecommerce-app/backend/src/server.js`**:
+  - Semantic synonym expansion and entity extraction (price constraints, categories, brands, order references `ORD-...`, coupon queries).
+  - Queries SQLite database in real time for relevant items, recalculating availability and ratings.
+  - Returns structured textual explanations, actionable suggestion pills, order tracking objects, and enriched product recommendation arrays.
+- **Frontend AI Widget (`ecommerce-app/frontend/components/AIAssistant.js`)**:
+  - Floating action trigger with shimmering indicator and notification ping.
+  - Full-featured chat drawer with starter conversation prompts, quick-reply pills, direct order tracking cards, and interactive product recommendation cards with one-click **"Add to Cart"** functionality.
+  - Injected globally via `ecommerce-app/frontend/app/layout.js`.
+
+### Files Touched
+- `ecommerce-app/backend/src/server.js` (Modified - Added `POST /api/ai/chat` endpoint with NLU & SQLite grounding)
+- `ecommerce-app/frontend/components/AIAssistant.js` (Created - Interactive floating AI Assistant widget)
+- `ecommerce-app/frontend/app/layout.js` (Modified - Embedded `<AIAssistant />` globally)
+
+### Verification & Quality Assurance
+- Integration tests executed against `http://localhost:5000/api/ai/chat`:
+  - `Find me espresso and coffee makers`: Successfully returned `BaristaPro Precision Espresso Machine`, `AuraBrew Kettle`, and `ColdBrew Pitcher`.
+  - `What discount coupons do you have?`: Returned verified active codes `WELCOME10`, `SAVE20`, `SUPER30`, `FLASH50`.
+  - `What is your return policy?`: Returned 30-day money-back guarantee, free shipping over $50, and 2-year warranty details.
+  - `where is ORD-20261102-4821`: Looked up order in SQLite database and formatted status card.
+- Frontend compilation & delivery: `http://localhost:3000` rendered with the AI assistant widget.
+
+### Next Planned Task (Awaiting User Permission):
+- [x] Task ID: Task-13: Master Control Dashboard Phase 1: Persistence & Row-Level Security (RLS)
+
+
+---
+
+## [Task-13] - Master Control Dashboard Phase 1: Persistence & Row-Level Security (RLS)
+**Timestamp:** 2026-11-03 13:13:00 IST  
+**Status:** IN-PROGRESS  
+
+### Objective & Rationale ("Why")
+- Implement Component 1 of the Master Control Dashboard per approved Implementation Plan (v4):
+  - Database schema definition using Alembic migrations with strict PostgreSQL 16 Row-Level Security (RLS) policies.
+  - Multi-tenant data isolation: all tenant tables isolated using `tenant_isolation_policy` bound to `current_setting('app.tenant_id', true)` and `FORCE ROW LEVEL SECURITY`.
+  - Principle of least privilege: application role `novaretail_app` granted standard CRUD on data tables, but strictly restricted to `INSERT` and `SELECT` only on `audit_events` (immutable audit trail).
+  - Concrete PostgreSQL repositories behind existing ports (`OrderPort`, `CatalogPort`, `RefundPort`) replacing in-memory mocks.
+
+### Architectural Boundaries & Modularity
+- **Alembic Configuration (`support-assistant/alembic.ini`, `support-assistant/alembic/`)**:
+  - `versions/001_core_and_rls.py`: DDL defining `tenants`, `staff_users`, `staff_tenant_memberships`, `staff_sessions`, `tenant_policy_configs`, `refund_requests`, `audit_events`, `conversation_sessions`, `conversation_turns`, `turn_raw`, `spend_ledger`, `escalations`, `knowledge_versions`, `knowledge_chunks`, `knowledge_version_chunks`, `ingestion_jobs`.
+  - Migration helper applying RLS across all tenant-scoped tables.
+  - Partial unique index on `refund_requests (tenant_id, order_id, item_ref) WHERE state IN ('pending_approval', 'approved', 'processed')` preventing duplicate concurrent refunds.
+- **Database Session Manager (`support-assistant/db/session.py`)**:
+  - Async & Sync engines supporting PostgreSQL (and SQLite fallback for fast isolated tests).
+  - `get_db_session(tenant_id: str)` automatically sets `app.tenant_id` session configuration.
+- **Postgres Adapters (`support-assistant/adapters/postgres/`)**:
+  - `order_repository.py`: implements `OrderPort`.
+  - `catalog_repository.py`: implements `CatalogPort`.
+  - `refund_repository.py`: implements `RefundPort`.
+
+### Files Touched
+- `support-assistant/alembic.ini` (Created)
+- `support-assistant/alembic/env.py` (Created)
+- `support-assistant/alembic/script.py.mako` (Created)
+- `support-assistant/alembic/versions/001_core_and_rls.py` (Created)
+- `support-assistant/db/session.py` (Created)
+- `support-assistant/adapters/postgres/__init__.py` (Created)
+- `support-assistant/adapters/postgres/order_repository.py` (Created)
+- `support-assistant/adapters/postgres/catalog_repository.py` (Created)
+- `support-assistant/adapters/postgres/refund_repository.py` (Created)
+- `support-assistant/tests/test_alembic_and_rls.py` (Created)
+
+### Verification & Quality Assurance
+- Verification plan:
+  - Verify Alembic migrations generate up/down SQL and valid syntax.
+  - Test RLS policies presence and app role privileges.
+  - Test repository operations through existing ports.
+  - Verify regression on all 96 existing tests.
+
+### Next Planned Task (Awaiting User Permission):
+- [ ] Task ID: Task-14: Master Control Dashboard Phase 2: Staff Auth, Approvals & Payment Outbox
+
