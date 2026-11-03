@@ -20,7 +20,8 @@ from fastapi.testclient import TestClient
 from db.models import Base, StaffUser, StaffTenantMembership, StaffSession, Tenant
 from services.dashboard_api.auth import (
     router as auth_router, hash_password, verify_password,
-    generate_totp_secret, verify_totp, is_session_stepped_up, mark_session_stepped_up
+    generate_totp_secret, verify_totp, is_session_stepped_up, mark_session_stepped_up,
+    _step_up_tracker
 )
 from services.dashboard_api.dependencies import (
     get_current_staff, require_roles, require_step_up, StaffSessionContext
@@ -35,6 +36,7 @@ def run_async(coro):
 class TestStaffAuthAndSessions(unittest.TestCase):
 
     def setUp(self):
+        _step_up_tracker.clear()
         self.engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
         self.session_maker = async_sessionmaker(self.engine, expire_on_commit=False)
 

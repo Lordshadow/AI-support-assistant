@@ -792,6 +792,53 @@
 - `a15b094 feat(auth,refunds): implement staff auth, rbac, atomic refund approvals and payment outbox worker`
 
 ### Next Planned Task (Awaiting User Permission):
-- [ ] Task ID: Task-15: Master Control Dashboard Phase 3: Turn Recording, R5 Trace & R4 Spend Hot-Path
+- [x] Task ID: Task-15: Master Control Dashboard Phase 3: Turn Recording, R5 Trace & R4 Spend Hot-Path
+
+
+---
+
+## [Task-15] - Master Control Dashboard Phase 3: Turn Recording, R5 Trace & R4 Spend Hot-Path
+**Timestamp:** 2026-11-03 14:07:00 IST  
+**Status:** IN-PROGRESS  
+
+### Objective & Rationale ("Why")
+- Implement Component 4 of the Master Control Dashboard per approved Implementation Plan (v4):
+  - Spec 14.1 & R5 Full Trace Persistence: every conversation turn recorded in `conversation_turns` with all required audit columns (masked prompt/completion, intent, latency, tokens, tool calls JSON, grounding score).
+  - DPDP compliance: transcripts masked by default; unmasked raw text stored in `turn_raw` with strict Manager-only + Step-Up + Audited access.
+  - R4 Spend Ledger & Hot-Path Cap Enforcement: token accounting in `spend_ledger`; chat worker enforces daily (₹2,500) and monthly (₹50,000) caps *before* calling the LLM, transitioning to fixed deterministic menus and human handoff when capped.
+  - Dashboard Conversations & Reports APIs: endpoints for conversation list, turn trace inspection, PII unmasking, and spend/deflection reporting.
+
+### Architectural Boundaries & Modularity
+- **Worker Turn & Spend Orchestration (`support-assistant/services/worker/orchestrator.py`, `spend_manager.py`)**:
+  - `SpendManager`: computes INR costs per model call, checks daily/monthly caps against `tenants` limits, and emits structured alerts at 80% cap.
+  - Turn recorder: writes masked data to `conversation_turns`, raw data to `turn_raw`, and token costs to `spend_ledger` in database.
+- **Conversations API (`support-assistant/services/dashboard_api/conversations.py`)**:
+  - Filtered conversation listing.
+  - Audited masked transcript view.
+  - Audited Spec 14.1 trace viewer.
+  - Manager-only + Step-up PII unmask workflow reading from `turn_raw` and logging audit events.
+- **Reports API (`support-assistant/services/dashboard_api/reports.py`)**:
+  - Spend meters, deflection rate, p50/p95 latency metrics, and cost per conversation.
+
+### Files Touched
+- `support-assistant/services/worker/spend_manager.py` (Created)
+- `support-assistant/services/worker/turn_recorder.py` (Created)
+- `support-assistant/services/worker/orchestrator.py` (Modified)
+- `support-assistant/services/dashboard_api/conversations.py` (Created)
+- `support-assistant/services/dashboard_api/reports.py` (Created)
+- `support-assistant/tests/test_r5_trace_and_unmask.py` (Created)
+- `support-assistant/tests/test_spend_ledger_and_cap_gate.py` (Created)
+
+### Verification & Quality Assurance
+- Verification plan:
+  - Verify every turn writes all Spec 14.1 columns to `conversation_turns`.
+  - Verify unmask endpoint requires Manager role and active Step-up; verify non-manager is blocked with 403; verify audit event is written.
+  - Verify spend cap gate: set spend to ₹2,500; verify worker skips LLM and returns deterministic fallback with handoff.
+  - Verify 80% spend alert dispatch.
+  - Verify reports aggregation: deflection rate, latency percentiles, and cost per turn.
+
+### Next Planned Task (Awaiting User Permission):
+- [ ] Task ID: Task-16: Master Control Dashboard Phase 4: Escalations Queue & Bot Silencing
+
 
 

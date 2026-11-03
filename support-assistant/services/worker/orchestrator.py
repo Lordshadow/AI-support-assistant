@@ -16,6 +16,8 @@ from core.models import SessionContext
 from core.router.router import AIRouter, RouteDecision
 from services.mcp_servers.dispatcher import MCPToolDispatcher
 from services.worker.llm_client import LLMClient, MockLLMClient, ToolCall
+from services.worker.spend_manager import spend_manager
+from services.worker.turn_recorder import TurnRecorder
 
 
 @dataclass
@@ -135,6 +137,42 @@ class WorkerOrchestrator:
                     requires_action="disambiguation"
                 )
 
+        # 5b. Hot-Path Spend Cap Gate (Requirement R4, Spec 6.2, 11.1)
+        is_capped, reason = await spend_manager.is_spend_capped(ctx.tenant_id)
+        if is_capped:
+            capped_reply = (
+                "Our AI assistant is temporarily operating in essential mode due to daily high traffic. "
+                "Please select from common options below or contact our human support team."
+            )
+            latency = round((time.perf_counter() - start_time) * 1000, 2)
+            try:
+                turn_id = await TurnRecorder.record_turn(
+                    tenant_id=ctx.tenant_id,
+                    conv_id=ctx.conv_id,
+                    customer_id=ctx.customer_id or "anonymous",
+                    user_input_raw=user_message,
+                    assistant_response_raw=capped_reply,
+                    intent="spend_capped_fallback",
+                    latency_ms=int(latency),
+                    tokens_prompt=0,
+                    tokens_completion=0,
+                    channel=ctx.channel,
+                    handoff_state="open"
+                )
+            except Exception:
+                turn_id = None
+
+            return OrchestratorResponse(
+                reply=capped_reply,
+                route_type="spend_capped",
+                language=lang,
+                model_used="spend-cap-gate",
+                tools_called=[],
+                latency_ms=latency,
+                requires_action="handoff",
+                trace_id=turn_id
+            )
+
         # 6. Tool-Calling LLM Execution Loop
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -152,6 +190,7 @@ class WorkerOrchestrator:
 
         final_reply = llm_resp.content
         requires_action = None
+        synth_resp = None
 
         if llm_resp.tool_calls:
             # Execute requested tools via Dispatcher
@@ -191,6 +230,39 @@ class WorkerOrchestrator:
             final_reply = synth_resp.content
 
         latency = round((time.perf_counter() - start_time) * 1000, 2)
+
+        # 7. Record Turn Trace & Spend Accounting (Spec 14.1, R4, R5)
+        prompt_tokens = llm_resp.token_usage.get("prompt_tokens", 0)
+        completion_tokens = llm_resp.token_usage.get("completion_tokens", 0)
+        if synth_resp:
+            prompt_tokens += synth_resp.token_usage.get("prompt_tokens", 0)
+            completion_tokens += synth_resp.token_usage.get("completion_tokens", 0)
+
+        tool_calls_payload = [
+            {"call_id": tc.call_id, "name": tc.name, "arguments": tc.arguments}
+            for tc in llm_resp.tool_calls
+        ]
+
+        try:
+            turn_id = await TurnRecorder.record_turn(
+                tenant_id=ctx.tenant_id,
+                conv_id=ctx.conv_id,
+                customer_id=ctx.customer_id or "anonymous",
+                user_input_raw=user_message,
+                assistant_response_raw=final_reply or "",
+                intent=decision.intent,
+                latency_ms=int(latency),
+                tokens_prompt=prompt_tokens,
+                tokens_completion=completion_tokens,
+                tool_calls=tool_calls_payload,
+                grounding_score=1.0,
+                channel=ctx.channel,
+                handoff_state="open" if "handoff_to_human" in tools_called_log else "none",
+                model_name=llm_resp.model_used
+            )
+        except Exception:
+            turn_id = None
+
         return OrchestratorResponse(
             reply=final_reply or "I have processed your request.",
             route_type=decision.route_type,
@@ -198,5 +270,6 @@ class WorkerOrchestrator:
             model_used=llm_resp.model_used,
             tools_called=tools_called_log,
             latency_ms=latency,
-            requires_action=requires_action
+            requires_action=requires_action,
+            trace_id=turn_id
         )

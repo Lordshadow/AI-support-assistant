@@ -4,6 +4,7 @@ Validates Specification Section 3.2, 7, 8, 9, 10, and 15.
 """
 
 import unittest
+import asyncio
 import sys
 from pathlib import Path
 
@@ -21,11 +22,8 @@ from services.worker import WorkerOrchestrator, MockLLMClient
 
 
 def run_sync(coro):
-    """Drive in-memory coroutine without socket dependencies."""
-    try:
-        coro.send(None)
-    except StopIteration as e:
-        return e.value
+    """Drive in-memory coroutine."""
+    return asyncio.run(coro)
 
 
 class TestWorkerOrchestrator(unittest.TestCase):
