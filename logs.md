@@ -948,7 +948,7 @@
   - Outcome: **130/130 passed in 18.015s (0 regressions)**.
 
 ### Git Commit
-- `Pending commit for Phase 5`
+- `9c0d017 feat(knowledge): implement knowledge version manifest, clause preview, deletion guard, and eval gate`
 
 ### Next Planned Task (Awaiting User Permission):
 - [ ] Task ID: Task-18: Master Control Dashboard Phase 6: Website Widget (Spec 16.1, 16.2) & React Dashboard Frontend
