@@ -219,11 +219,15 @@ class WorkerOrchestrator:
 
         # First LLM Call: Plan tools or reply
         model_tier = "large" if decision.route_type == "large_model" else "small"
-        llm_resp = await self.llm.chat(
-            messages=messages,
-            tools=self.dispatcher.get_tool_schemas(),
-            model_tier=model_tier
-        )
+        try:
+            llm_resp = await self.llm.chat(
+                messages=messages,
+                tools=self.dispatcher.get_tool_schemas(),
+                model_tier=model_tier
+            )
+        except Exception:
+            spend_manager.release_reservation(ctx.tenant_id)
+            raise
 
         final_reply = llm_resp.content
         requires_action = None

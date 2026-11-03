@@ -57,8 +57,22 @@ class OutboxPaymentWorker:
         if not refund:
             return None
 
-        # Stamp lease timeout
-        refund.leased_until = now + timedelta(seconds=self.lease_seconds)
+        # Stamp lease timeout with conditional update for multi-worker safety
+        lease_deadline = now + timedelta(seconds=self.lease_seconds)
+        stmt_lease = (
+            update(RefundRequest)
+            .where(
+                RefundRequest.refund_id == refund.refund_id,
+                RefundRequest.state == "approved",
+                (RefundRequest.leased_until == None) | (RefundRequest.leased_until < now)
+            )
+            .values(leased_until=lease_deadline)
+            .execution_options(synchronize_session=False)
+        )
+        res = await session.execute(stmt_lease)
+        if res.rowcount != 1:
+            return None
+        refund.leased_until = lease_deadline
         await session.flush()
         return refund
 
@@ -107,8 +121,9 @@ class OutboxPaymentWorker:
             return {"status": "requeued", "retry_count": refund.retry_count}
 
         # 3. Log audit event
+        import uuid
         audit = AuditEvent(
-            event_id=f"AUD-{refund.refund_id}-OUTBOX",
+            event_id=f"AUD-{refund.refund_id}-{uuid.uuid4().hex[:8]}",
             tenant_id=self.tenant_id,
             actor_id="system_outbox_worker",
             actor_role="system",

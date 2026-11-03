@@ -56,37 +56,51 @@ class SpendManager:
                 "monthly_spend": 0.0,
                 "daily_cap": 2500.0,
                 "monthly_cap": 50000.0,
+                "in_flight": 0.0,
             }
             self._cache[tenant_id] = bucket
         return bucket
 
-    async def is_spend_capped(self, tenant_id: str, session: Optional[AsyncSession] = None) -> Tuple[bool, str]:
+    async def is_spend_capped(
+        self,
+        tenant_id: str,
+        reserve_inr: float = 15.0,
+        session: Optional[AsyncSession] = None
+    ) -> Tuple[bool, str]:
         """
-        Hot-path budget gate check.
+        Hot-path budget gate check with concurrency-safe reservation.
         Returns: (is_capped: bool, reason: str)
-        If daily spend >= ₹2,500 or monthly spend >= 95% (₹47,500), blocks LLM call.
+        If daily spend + in-flight >= ₹2,500 or monthly spend >= 95% (₹47,500), blocks LLM call.
         """
         bucket = self._get_cache_bucket(tenant_id)
+        effective_daily = bucket["daily_spend"] + bucket.get("in_flight", 0.0)
 
         # 1. Check daily ceiling (₹2,500)
-        if bucket["daily_spend"] >= bucket["daily_cap"]:
+        if effective_daily >= bucket["daily_cap"]:
             return True, f"Daily spend cap of ₹{bucket['daily_cap']:,.2f} reached (Current: ₹{bucket['daily_spend']:,.2f})."
 
         # 2. Check monthly ceiling 95% threshold (₹47,500 of ₹50,000)
         monthly_threshold = bucket["monthly_cap"] * 0.95
-        if bucket["monthly_spend"] >= monthly_threshold:
+        effective_monthly = bucket["monthly_spend"] + bucket.get("in_flight", 0.0)
+        if effective_monthly >= monthly_threshold:
             return True, f"Monthly spend reached 95% threshold (Current: ₹{bucket['monthly_spend']:,.2f} / ₹{bucket['monthly_cap']:,.2f})."
+
+        # Reserve estimated cost for in-flight model call to prevent concurrent burst over-cap leakage
+        bucket["in_flight"] = bucket.get("in_flight", 0.0) + reserve_inr
 
         # 3. Spend warning alert at 80% (₹40,000)
         if bucket["monthly_spend"] >= (bucket["monthly_cap"] * 0.80):
             alert_key = f"{tenant_id}:{bucket['month']}:80pct"
             if alert_key not in self._alerted_80:
                 self._alerted_80.add(alert_key)
-                # Emit structured spend alert
-                # In production, this bridges to webhook/monitoring
                 print(f"[ALERT: SPEND_WARNING_80_PERCENT] Tenant '{tenant_id}' monthly spend reached ₹{bucket['monthly_spend']:,.2f}")
 
         return False, "Spend within limits"
+
+    def release_reservation(self, tenant_id: str, reserved_inr: float = 15.0):
+        """Releases reserved in-flight budget if model call was aborted or errored."""
+        bucket = self._get_cache_bucket(tenant_id)
+        bucket["in_flight"] = max(0.0, bucket.get("in_flight", 0.0) - reserved_inr)
 
     async def record_spend(
         self,
@@ -96,14 +110,16 @@ class SpendManager:
         prompt_tokens: int,
         completion_tokens: int,
         purpose: str = "chat",
+        reserved_inr: float = 15.0,
         session: Optional[AsyncSession] = None,
     ) -> float:
         """
         Updates in-memory fast meters and inserts row into spend_ledger.
-        Returns the computed INR cost.
+        Releases in-flight reservation and applies actual computed INR cost.
         """
         cost_inr = compute_cost_inr(model, prompt_tokens, completion_tokens)
         bucket = self._get_cache_bucket(tenant_id)
+        bucket["in_flight"] = max(0.0, bucket.get("in_flight", 0.0) - reserved_inr)
         bucket["daily_spend"] += cost_inr
         bucket["monthly_spend"] += cost_inr
 
