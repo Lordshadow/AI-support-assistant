@@ -858,7 +858,7 @@
 
 ## [Task-16] - Master Control Dashboard Phase 4: Escalations Queue & Bot Silencing
 **Timestamp:** 2026-11-03 14:18:00 IST  
-**Status:** IN-PROGRESS  
+**Status:** COMPLETED & VERIFIED  
 
 ### Objective & Rationale ("Why")
 - Implement Component 5 of the Master Control Dashboard per approved Implementation Plan (v4):
@@ -882,11 +882,18 @@
 - `support-assistant/tests/test_escalations_and_bot_silencing.py` (Created)
 
 ### Verification & Quality Assurance
-- Verification plan:
-  - Test escalations listing and filtering.
-  - Concurrency test: simulate 5 executives claiming the same open ticket; verify exactly 1 succeeds and 4 receive 409 Conflict.
-  - Test bot silencing: customer sends message while ticket is open; verify LLM is not called and fixed human takeover template is returned.
-  - Test resolution: resolving escalation clears handoff state and allows normal interactions.
+- Automated tests executed:
+  - `python -m unittest support-assistant/tests/test_escalations_and_bot_silencing.py`:
+    - Verified escalations listing, filtering by state/priority, and wait time calculation.
+    - Verified atomic claim race: 5 concurrent executive claim requests; exactly 1 succeeded (200 OK) and 4 received 409 Conflict. Exactly 1 claim audit event recorded.
+    - Verified bot silencing: customer messages during active escalation return fixed human takeover template and completely suppress model calls.
+    - Verified resolution workflow: resolving ticket with mandatory $\ge 10$-character note updates state to `resolved`, updates conversation handoff state, and clears silencing. Outcome: **4/4 passed in 0.908s**.
+  - Full Regression Suite:
+    - Command: `python -m unittest discover -s support-assistant/tests`
+    - Outcome: **123/123 passed (0 regressions)**.
+
+### Git Commit
+- `a4d4e2e feat(escalations): implement escalations queue, atomic claim race protection, and bot silencing gate`
 
 ### Next Planned Task (Awaiting User Permission):
 - [ ] Task ID: Task-17: Master Control Dashboard Phase 5: Knowledge Version Manifest & Eval Gate
