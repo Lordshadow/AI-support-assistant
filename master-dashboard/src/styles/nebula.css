@@ -1,0 +1,95 @@
+/**
+ * NovaRetail Support Desk - Nebula Canvas Background
+ * Pure CSS/SVG procedural gradients - Zero heavy raster image assets.
+ * GPU-optimized with will-change and transform isolation.
+ */
+
+.nebula-backdrop {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -10;
+  pointer-events: none;
+  overflow: hidden;
+  background-color: var(--teal-950);
+  background-image: 
+    radial-gradient(circle at 18% 15%, rgba(63, 210, 192, 0.16) 0%, transparent 45%),
+    radial-gradient(circle at 82% 28%, rgba(23, 165, 143, 0.20) 0%, transparent 50%),
+    radial-gradient(circle at 50% 85%, rgba(15, 92, 88, 0.35) 0%, transparent 60%),
+    radial-gradient(circle at 85% 90%, rgba(63, 210, 192, 0.12) 0%, transparent 40%),
+    linear-gradient(180deg, rgba(6, 47, 46, 0.70) 0%, rgba(4, 30, 29, 0.95) 100%);
+}
+
+/* Atmospheric Ambient Glow Blobs */
+.nebula-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.55;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: nebula-drift 24s ease-in-out infinite alternate;
+}
+
+.nebula-blob-1 {
+  top: -10%;
+  left: 20%;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(63, 210, 192, 0.22) 0%, rgba(23, 165, 143, 0.08) 60%, transparent 70%);
+  animation-duration: 28s;
+}
+
+.nebula-blob-2 {
+  bottom: 5%;
+  right: -5%;
+  width: 750px;
+  height: 750px;
+  background: radial-gradient(circle, rgba(23, 165, 143, 0.28) 0%, rgba(11, 74, 71, 0.10) 65%, transparent 75%);
+  animation-duration: 32s;
+  animation-delay: -6s;
+}
+
+.nebula-blob-3 {
+  top: 45%;
+  left: -10%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(63, 210, 192, 0.15) 0%, rgba(6, 47, 46, 0.05) 60%, transparent 70%);
+  animation-duration: 22s;
+  animation-delay: -12s;
+}
+
+/* Subtle Star Particle Canvas (SVG Data URI) */
+.nebula-stars {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.35;
+  background-image: radial-gradient(rgba(234, 246, 244, 0.8) 1px, transparent 1px),
+                    radial-gradient(rgba(63, 210, 192, 0.6) 1px, transparent 1px);
+  background-size: 55px 55px, 90px 90px;
+  background-position: 0 0, 25px 25px;
+}
+
+/* Keyframe Animation for Ambient Drift */
+@keyframes nebula-drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(35px, 20px) scale(1.06);
+  }
+  100% {
+    transform: translate(-25px, 35px) scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nebula-blob {
+    animation: none;
+    transform: none;
+  }
+}

@@ -5,6 +5,7 @@ Complies with Specification Sections 1.3, 5, 6, 10, and 15.1.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Literal, Optional
 
@@ -29,6 +30,29 @@ class AuthLevel(str, Enum):
         return self.rank(self) >= self.rank(required)
 
 
+PageType = Literal[
+    "product_details",
+    "product_listing",
+    "cart",
+    "checkout",
+    "order_details",
+    "dashboard",
+    "other",
+]
+
+
+@dataclass(frozen=True)
+class PageContext:
+    """Validated, transport-supplied browsing context for the current turn."""
+
+    url: str
+    page_type: PageType
+    product_id: Optional[str] = None
+    order_id: Optional[str] = None
+    cart_id: Optional[str] = None
+    title: Optional[str] = None
+
+
 @dataclass(frozen=True)
 class SessionContext:
     """
@@ -42,6 +66,7 @@ class SessionContext:
     level: AuthLevel = AuthLevel.ANONYMOUS
     channel: Literal["web", "whatsapp"] = "web"
     verified_until: Optional[datetime] = None
+    page_context: Optional[PageContext] = None
 
 
 @dataclass(frozen=True)
@@ -65,7 +90,7 @@ class ProductSpecs:
 @dataclass(frozen=True)
 class PriceInfo:
     product_id: str
-    price: int
+    price: Decimal | int
     discount_price: Optional[int]
     currency: str = "INR"
     in_stock: bool = True
@@ -91,6 +116,7 @@ class OrderItem:
     quantity: int = 1
     is_digital: bool = False
     is_refunded: bool = False
+    refund_eligibility_verified: bool = True
 
 
 class OrderStatus(str, Enum):
@@ -100,6 +126,7 @@ class OrderStatus(str, Enum):
     DELIVERED = "Delivered"
     CANCELLED = "Cancelled"
     RETURNED = "Returned"
+    UNKNOWN = "Unknown"
 
 
 @dataclass(frozen=True)
@@ -115,7 +142,7 @@ class Order:
     order_id: str
     customer_id: str
     items: list[OrderItem]
-    total_amount_inr: int
+    total_amount_inr: Decimal | int
     status: OrderStatus
     created_at: datetime
     delivered_at: Optional[datetime] = None
@@ -138,7 +165,7 @@ class RefundResult:
     refund_id: str
     order_id: str
     customer_id: str
-    amount_inr: int
+    amount_inr: Decimal | int
     state: RefundState
     idempotency_key: str
     reason: str

@@ -5,6 +5,7 @@ Complies with Specification Section 7.3, 10 (Refund Flow), and 15.1 (Auth levels
 """
 
 from typing import Optional, Any
+from decimal import Decimal
 from core.ports import RefundPort
 from core.models import AuthLevel
 from core.policy_engine import generate_idempotency_key
@@ -42,7 +43,7 @@ class MCPRefundServer:
             "order_id": order_id,
             "is_eligible": is_eligible,
             "policy_reason": reason,
-            "eligible_amount_inr": amount
+            "eligible_amount_inr": str(amount) if isinstance(amount, Decimal) else amount
         }
 
     async def create_refund_request(
@@ -95,7 +96,7 @@ class MCPRefundServer:
         return {
             "refund_id": result.refund_id,
             "order_id": result.order_id,
-            "amount_inr": result.amount_inr,
+            "amount_inr": str(result.amount_inr) if isinstance(result.amount_inr, Decimal) else result.amount_inr,
             "state": result.state.value,
             "message": result.message,
             "created_at": result.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -119,7 +120,7 @@ class MCPRefundServer:
             "found": True,
             "refund_id": result.refund_id,
             "order_id": result.order_id,
-            "amount_inr": result.amount_inr,
+            "amount_inr": str(result.amount_inr) if isinstance(result.amount_inr, Decimal) else result.amount_inr,
             "state": result.state.value,
             "message": result.message,
             "decided_by": result.decided_by,

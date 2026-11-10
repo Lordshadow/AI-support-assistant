@@ -1,0 +1,238 @@
+/**
+ * NovaRetail Support Desk - Global Styles & Glass Helper Classes
+ */
+
+@import './tokens.css';
+@import './nebula.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  min-height: 100vh;
+  font-family: var(--font-family-sans);
+  background-color: var(--teal-950);
+  color: var(--text-on-dark-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Accessible Focus States */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* ==========================================================================
+   GLASS SURFACE CLASSES (Three Tiers)
+   ========================================================================== */
+
+/* Tier 1: Glass Chrome (Navigation, User Chips, Floating Headers) */
+.glass-chrome {
+  background: var(--glass-chrome-bg);
+  backdrop-filter: blur(var(--glass-chrome-blur));
+  -webkit-backdrop-filter: blur(var(--glass-chrome-blur));
+  border: 1px solid var(--glass-chrome-border);
+  box-shadow: var(--glass-chrome-shadow);
+}
+
+/* Tier 2: Glass Panel (Cards, Summary Widgets) */
+.glass-panel {
+  background: var(--glass-panel-bg);
+  backdrop-filter: blur(var(--glass-panel-blur));
+  -webkit-backdrop-filter: blur(var(--glass-panel-blur));
+  border: 1px solid var(--glass-panel-border);
+  box-shadow: var(--glass-panel-shadow);
+  border-radius: var(--radius-2xl);
+}
+
+/* Tier 2b: Glass Panel Light (Mint-White Inset Cards from Reference) */
+.glass-panel-light {
+  background: var(--glass-panel-light-bg);
+  backdrop-filter: blur(var(--glass-panel-light-blur));
+  -webkit-backdrop-filter: blur(var(--glass-panel-light-blur));
+  border: 1px solid var(--glass-panel-light-border);
+  box-shadow: var(--glass-panel-light-shadow);
+  color: var(--text-on-light-primary);
+  border-radius: var(--radius-xl);
+}
+
+/* Tier 3: Glass Data (Nearly Opaque for Tables, Transcripts, Traces, Forms) */
+.glass-data {
+  background: var(--glass-data-bg);
+  backdrop-filter: blur(var(--glass-data-blur));
+  -webkit-backdrop-filter: blur(var(--glass-data-blur));
+  border: 1px solid var(--glass-data-border);
+  box-shadow: var(--glass-data-shadow);
+  border-radius: var(--radius-xl);
+}
+
+/* ==========================================================================
+   SIGNATURE DESIGN ELEMENTS
+   ========================================================================== */
+
+/* Uppercase Micro-Labels */
+.micro-label {
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-micro);
+  color: var(--aqua-400);
+}
+
+.micro-label-light {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-micro);
+  color: var(--text-on-light-secondary);
+}
+
+/* Notched Panel Top Pill Container */
+.notched-panel {
+  position: relative;
+  padding: 1.75rem;
+  border-radius: var(--radius-2xl);
+}
+
+.notched-tab-pill {
+  position: absolute;
+  top: -14px;
+  left: 28px;
+  padding: 4px 14px;
+  border-radius: var(--radius-pill);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-micro);
+  background: var(--teal-800);
+  border: 1px solid var(--aqua-400);
+  color: var(--aqua-400);
+  box-shadow: 0 4px 12px rgba(4, 30, 29, 0.5);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 10;
+}
+
+/* Corner Action Square Detail Button */
+.corner-detail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--teal-800);
+  border: 1px solid var(--teal-600);
+  color: var(--aqua-400);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.corner-detail-btn:hover {
+  background: var(--aqua-500);
+  color: var(--teal-950);
+  transform: translateY(-1px);
+}
+
+/* Arch Scroll / Jump Control */
+.arch-jump-control {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 40px;
+  border-radius: 20px 20px 6px 6px;
+  background: var(--teal-900);
+  border: 1px solid var(--aqua-400);
+  border-bottom: none;
+  color: var(--text-on-dark-primary);
+  cursor: pointer;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.3);
+  transition: all var(--transition-fast);
+}
+
+.arch-jump-control:hover {
+  background: var(--teal-800);
+  transform: translateY(-2px);
+}
+
+/* Pill Bottom Status Bar */
+.bottom-status-bar {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 48px);
+  max-width: 960px;
+  height: 48px;
+  border-radius: var(--radius-pill);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 45;
+}
+
+.circular-home-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--teal-800);
+  border: 1px solid var(--aqua-400);
+  color: var(--aqua-400);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.circular-home-btn:hover {
+  background: var(--aqua-400);
+  color: var(--teal-950);
+  transform: scale(1.08);
+}
+
+/* Layout Containers */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 80px; /* Offset for bottom status bar */
+}
+
+.main-content {
+  flex: 1;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem 2rem;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(4, 30, 29, 0.4);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--teal-700);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--teal-600);
+}

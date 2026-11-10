@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 
 from db.models import Escalation, ConversationSession, AuditEvent
 from db.session import get_async_session
@@ -27,6 +27,7 @@ class ResolveRequest(BaseModel):
 
 @router.get("")
 async def list_escalations(
+    esc_id: Optional[str] = Query(None),
     state: Optional[str] = Query(None, description="Filter by state: open, assigned, resolved"),
     priority: Optional[str] = Query(None, description="Filter by priority: low, medium, high, urgent"),
     limit: int = Query(50, ge=1, le=100),
@@ -37,10 +38,21 @@ async def list_escalations(
     now = datetime.now(timezone.utc)
     async with get_async_session(tenant_id=staff.tenant_id) as session:
         stmt = select(Escalation).where(Escalation.tenant_id == staff.tenant_id)
+        if esc_id:
+            stmt = stmt.where(Escalation.esc_id == esc_id)
         if state:
             stmt = stmt.where(Escalation.state == state)
         if priority:
             stmt = stmt.where(Escalation.priority == priority)
+
+        count_stmt = select(func.count(Escalation.esc_id)).where(Escalation.tenant_id == staff.tenant_id)
+        if esc_id:
+            count_stmt = count_stmt.where(Escalation.esc_id == esc_id)
+        if state:
+            count_stmt = count_stmt.where(Escalation.state == state)
+        if priority:
+            count_stmt = count_stmt.where(Escalation.priority == priority)
+        total = (await session.execute(count_stmt)).scalar() or 0
 
         stmt = stmt.order_by(Escalation.created_at.desc()).offset(offset).limit(limit)
         tickets = (await session.execute(stmt)).scalars().all()
@@ -64,7 +76,7 @@ async def list_escalations(
                 "resolution_note": t.resolution_note,
             })
 
-        return {"escalations": results, "count": len(results)}
+        return {"escalations": results, "count": len(results), "total": total}
 
 
 @router.post("/{esc_id}/claim")

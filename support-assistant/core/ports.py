@@ -70,6 +70,20 @@ class CatalogPort(Protocol):
         ...
 
 
+class VectorStorePort(Protocol):
+    """Version-aware, tenant-scoped vector persistence boundary."""
+
+    async def get_chunk(self, tenant_id: str, chunk_id: str, session) -> Optional[object]:
+        ...
+
+    async def upsert_chunk(self, tenant_id: str, chunk_id: str, product_id: str, text: str,
+                           embedding: list[float], metadata: dict, session) -> object:
+        ...
+
+    async def link_version(self, version_id: str, chunk_id: str, session) -> None:
+        ...
+
+
 class RefundPort(Protocol):
     """Port for checking refund eligibility and executing refund actions."""
 

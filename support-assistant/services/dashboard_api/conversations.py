@@ -28,6 +28,7 @@ class UnmaskRequest(BaseModel):
 
 @router.get("")
 async def list_conversations(
+    conv_id: Optional[str] = None,
     channel: Optional[str] = None,
     handoff_state: Optional[str] = None,
     limit: int = Query(50, ge=1, le=100),
@@ -37,10 +38,21 @@ async def list_conversations(
     """List customer conversation sessions with metadata (Executives & Managers only)."""
     async with get_async_session(tenant_id=staff.tenant_id) as session:
         stmt = select(ConversationSession).where(ConversationSession.tenant_id == staff.tenant_id)
+        if conv_id:
+            stmt = stmt.where(ConversationSession.conv_id == conv_id)
         if channel:
             stmt = stmt.where(ConversationSession.channel == channel)
         if handoff_state:
             stmt = stmt.where(ConversationSession.handoff_state == handoff_state)
+
+        count_stmt = select(func.count(ConversationSession.conv_id)).where(ConversationSession.tenant_id == staff.tenant_id)
+        if conv_id:
+            count_stmt = count_stmt.where(ConversationSession.conv_id == conv_id)
+        if channel:
+            count_stmt = count_stmt.where(ConversationSession.channel == channel)
+        if handoff_state:
+            count_stmt = count_stmt.where(ConversationSession.handoff_state == handoff_state)
+        total = (await session.execute(count_stmt)).scalar() or 0
 
         stmt = stmt.order_by(ConversationSession.last_user_message_at.desc()).offset(offset).limit(limit)
         convs = (await session.execute(stmt)).scalars().all()
@@ -62,7 +74,7 @@ async def list_conversations(
                 "turn_count": turn_count,
             })
 
-        return {"conversations": results, "count": len(results)}
+        return {"conversations": results, "count": len(results), "total": total}
 
 
 @router.get("/{conv_id}")

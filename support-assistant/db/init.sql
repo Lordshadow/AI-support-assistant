@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS products (
     name VARCHAR(255) NOT NULL,
     brand VARCHAR(128) NOT NULL,
     category VARCHAR(64) NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    faqs JSONB NOT NULL DEFAULT '[]'::jsonb,
     aliases TEXT[] DEFAULT '{}',
     active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -80,16 +82,20 @@ CREATE TABLE IF NOT EXISTS policy_documents (
 -- 7. Customers Table
 CREATE TABLE IF NOT EXISTS customers (
     customer_id VARCHAR(64) PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL DEFAULT 'tenant_novaretail',
     phone_hash VARCHAR(64) NOT NULL UNIQUE, -- SHA-256 hash for DPDP compliance
+    email VARCHAR(255) NOT NULL UNIQUE,
+    full_name VARCHAR(255) NOT NULL,
     language_pref VARCHAR(16) DEFAULT 'en', -- 'en', 'ta', 'tanglish'
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_customers_tenant ON customers(tenant_id);
 
 -- 8. Customer Orders Table
 CREATE TABLE IF NOT EXISTS orders (
     order_id VARCHAR(64) PRIMARY KEY,
     customer_id VARCHAR(64) NOT NULL REFERENCES customers(customer_id),
-    total_amount_inr INT NOT NULL,
+    total_amount_inr NUMERIC(12, 2) NOT NULL,
     status VARCHAR(32) NOT NULL,            -- 'Processing', 'Shipped', 'Delivered', 'Cancelled'
     tracking_number VARCHAR(128),
     courier_name VARCHAR(64),
@@ -106,10 +112,11 @@ CREATE TABLE IF NOT EXISTS order_items (
     product_id VARCHAR(64) REFERENCES products(product_id),
     product_name VARCHAR(255) NOT NULL,
     category VARCHAR(64) NOT NULL,
-    price INT NOT NULL,
+    price NUMERIC(12, 2) NOT NULL,
     quantity INT DEFAULT 1,
     is_digital BOOLEAN DEFAULT FALSE,
-    is_refunded BOOLEAN DEFAULT FALSE
+    is_refunded BOOLEAN DEFAULT FALSE,
+    refund_eligibility_verified BOOLEAN DEFAULT TRUE NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 
@@ -118,7 +125,7 @@ CREATE TABLE IF NOT EXISTS refund_requests (
     refund_id VARCHAR(64) PRIMARY KEY,
     order_id VARCHAR(64) NOT NULL REFERENCES orders(order_id),
     customer_id VARCHAR(64) NOT NULL REFERENCES customers(customer_id),
-    amount_inr INT NOT NULL,
+    amount_inr NUMERIC(12, 2) NOT NULL,
     reason TEXT NOT NULL,
     state VARCHAR(32) NOT NULL,             -- 'processed', 'pending_approval', 'approved', 'rejected'
     idempotency_key VARCHAR(128) NOT NULL UNIQUE,

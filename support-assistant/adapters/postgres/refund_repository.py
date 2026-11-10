@@ -4,6 +4,7 @@ Complies with Specification Sections 6, 7.3, and 10 (Refund Flow).
 """
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 import uuid
 from sqlalchemy import select, update
@@ -11,7 +12,7 @@ from sqlalchemy import select, update
 from core.ports import RefundPort, OrderPort
 from core.models import RefundResult, RefundState
 from core.policy_engine import check_refund_eligibility, evaluate_refund_state, DEFAULT_REFUND_AUTO_LIMIT_INR
-from db.models import RefundRequest
+from db.models import RefundRequest, Tenant
 from db.session import get_async_session
 
 
@@ -66,7 +67,7 @@ class PostgresRefundRepository:
         customer_id: str,
         order_id: str,
         item_id: Optional[str] = None
-    ) -> tuple[bool, str, int]:
+    ) -> tuple[bool, str, Decimal | int]:
         order = await self._order_port.get_order(customer_id, order_id)
         if not order:
             return False, f"Order '{order_id}' was not found for this account.", 0
@@ -78,10 +79,13 @@ class PostgresRefundRepository:
         self,
         customer_id: str,
         order_id: str,
-        amount_inr: int,
+        amount_inr: Decimal | int,
         reason: str,
         idempotency_key: str
     ) -> RefundResult:
+        amount_inr = Decimal(str(amount_inr)).quantize(Decimal("0.01"))
+        if not amount_inr.is_finite() or amount_inr <= 0:
+            raise ValueError("Refund amount must be a positive INR amount.")
         async with get_async_session(tenant_id=self.tenant_id) as session:
             # 1. Idempotency Check
             stmt = select(RefundRequest).where(
@@ -116,8 +120,30 @@ class PostgresRefundRepository:
                 session.add(req)
                 return self._to_domain(req)
 
-            # 3. Determine initial state based on threshold
-            state = evaluate_refund_state(amount_inr, auto_limit_inr=self._auto_limit_inr)
+            if amount_inr > Decimal(str(max_amount)):
+                req = RefundRequest(
+                    refund_id=refund_id,
+                    tenant_id=self.tenant_id,
+                    order_id=order_id,
+                    customer_id=customer_id,
+                    amount_inr=amount_inr,
+                    state=RefundState.REJECTED.value,
+                    idempotency_key=idempotency_key,
+                    reason=reason,
+                    request_time=now,
+                    decided_by="policy_engine",
+                    decided_at=now,
+                    staff_note="Requested amount exceeds the verified eligible amount.",
+                    eligibility_snapshot={"eligible": False, "reason": "amount_exceeds_eligible", "max_amount": str(max_amount)},
+                )
+                session.add(req)
+                return self._to_domain(req)
+
+            # 3. Determine initial state using the current tenant policy.
+            tenant = await session.get(Tenant, self.tenant_id)
+            cfg = (tenant.widget_config or {}) if tenant else {}
+            auto_limit = Decimal(str(cfg.get("auto_refund_limit_inr", self._auto_limit_inr)))
+            state = evaluate_refund_state(amount_inr, auto_limit_inr=auto_limit)
             req = RefundRequest(
                 refund_id=refund_id,
                 tenant_id=self.tenant_id,
@@ -148,6 +174,35 @@ class PostgresRefundRepository:
                 return None
             return self._to_domain(row)
 
+    async def list_pending_refunds(self) -> list[RefundResult]:
+        """Return tenant-scoped refund requests awaiting staff approval."""
+        async with get_async_session(tenant_id=self.tenant_id) as session:
+            stmt = (
+                select(RefundRequest)
+                .where(
+                    RefundRequest.tenant_id == self.tenant_id,
+                    RefundRequest.state == RefundState.PENDING_APPROVAL.value,
+                )
+                .order_by(RefundRequest.request_time.desc())
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [self._to_domain(row) for row in rows]
+
+    async def get_refund_metrics(self) -> dict[str, int]:
+        """Return tenant-scoped refund state counts for the legacy desk API."""
+        async with get_async_session(tenant_id=self.tenant_id) as session:
+            stmt = select(RefundRequest.state).where(
+                RefundRequest.tenant_id == self.tenant_id
+            )
+            states = (await session.execute(stmt)).scalars().all()
+            return {
+                "total": len(states),
+                "auto_approved": sum(1 for state in states if state == RefundState.PROCESSED.value),
+                "pending": sum(1 for state in states if state == RefundState.PENDING_APPROVAL.value),
+                "staff_approved": sum(1 for state in states if state == RefundState.APPROVED.value),
+                "rejected": sum(1 for state in states if state == RefundState.REJECTED.value),
+            }
+
     async def record_staff_decision(
         self,
         refund_id: str,
@@ -171,7 +226,7 @@ class PostgresRefundRepository:
             row.staff_note = note
             return self._to_domain(row)
 
-    async def process_payment(self, order_id: str, amount_inr: int, idempotency_key: str) -> dict:
+    async def process_payment(self, order_id: str, amount_inr: Decimal | int, idempotency_key: str) -> dict:
         """Call external payment gateway mock."""
         self._payment_transactions[idempotency_key] = "paid"
         return {"status": "SUCCESS", "idempotency_key": idempotency_key, "amount": amount_inr}

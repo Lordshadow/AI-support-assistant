@@ -44,10 +44,10 @@ class TestAlembicAndRLS(unittest.TestCase):
         self.cfg = Config(self.ini_path)
 
     def test_alembic_revisions_and_heads(self):
-        """Verify Alembic script directory recognizes 001_core_and_rls as current head."""
+        """Verify Alembic script directory recognizes the current migration head."""
         script = ScriptDirectory.from_config(self.cfg)
         heads = script.get_heads()
-        self.assertEqual(heads, ["001_core_and_rls"])
+        self.assertEqual(heads, ["006_exact_order_refund_amounts"])
         rev = script.get_revision("001_core_and_rls")
         self.assertIsNotNone(rev)
         self.assertIsNone(rev.down_revision)
@@ -99,6 +99,8 @@ class TestAlembicAndRLS(unittest.TestCase):
         self.assertIn("CREATE ROLE novaretail_app", sql)
         self.assertIn("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO novaretail_app;", sql)
         self.assertIn("REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM novaretail_app;", sql)
+        self.assertIn("ALTER TABLE orders ALTER COLUMN total_amount_inr TYPE NUMERIC(12, 2)", sql)
+        self.assertIn("refund_eligibility_verified BOOLEAN DEFAULT true NOT NULL", sql)
 
     def test_offline_downgrade_sql_generation(self):
         """Verify downgrade static SQL cleans up all RLS policies and drops tables safely."""

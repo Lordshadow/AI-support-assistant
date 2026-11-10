@@ -8,7 +8,7 @@ import uuid
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, Text, DateTime, Time,
+    Column, String, Integer, Float, Boolean, Text, DateTime, Time, Numeric,
     ForeignKey, UniqueConstraint, Index, func
 )
 from sqlalchemy.orm import declarative_base, relationship
@@ -42,6 +42,7 @@ class Tenant(Base):
     active_product_version = Column(String(64), nullable=True)
     refund_turnaround_hours = Column(Integer(), server_default="24", nullable=False)
     widget_origins = Column(JSONB, server_default="[]", nullable=False)
+    widget_config = Column(JSONB, server_default="{\"name\":\"NovaRetail Support\",\"greeting\":\"Hi! How can I help you today?\",\"primaryColor\":\"#0284c7\",\"theme\":\"light\",\"launcherSide\":\"right\",\"quickPrompts\":[\"Track my order\",\"Product questions\"],\"autoOpen\":false}", nullable=False)
     jwks_url = Column(String(255), nullable=True)
     issuer = Column(String(255), nullable=True)
     audience = Column(String(255), nullable=True)
@@ -81,7 +82,13 @@ class StaffSession(Base):
 
     session_id = Column(String(128), primary_key=True)
     staff_id = Column(String(64), ForeignKey("staff_users.staff_id", ondelete="CASCADE"), nullable=False)
-    active_tenant_id = Column("tenant_id", String(64), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
+    tenant_id = Column(
+        String(64),
+        ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+        default=lambda context: context.get_current_parameters().get("active_tenant_id"),
+        nullable=False,
+    )
+    active_tenant_id = Column(String(64), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
@@ -90,6 +97,7 @@ class StaffSession(Base):
     __table_args__ = (
         Index("idx_staff_sessions_staff", "staff_id"),
         Index("idx_staff_sessions_tenant", "tenant_id"),
+        Index("idx_staff_sessions_active_tenant", "active_tenant_id"),
     )
 
 
@@ -118,7 +126,7 @@ class RefundRequest(Base):
     order_id = Column(String(64), nullable=False)
     customer_id = Column(String(64), nullable=False)
     item_ref = Column(String(64), server_default="ALL", nullable=False)
-    amount_inr = Column(Integer(), nullable=False)
+    amount_inr = Column(Numeric(12, 2), nullable=False)
     state = Column(String(32), server_default="pending_approval", nullable=False)
     idempotency_key = Column(String(128), nullable=False, unique=True)
     reason = Column(Text, nullable=False)
@@ -304,6 +312,42 @@ class IngestionJob(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class IngestionRun(Base):
+    __tablename__ = "ingestion_runs"
+
+    run_id = Column(String(64), primary_key=True)
+    job_id = Column(String(64), ForeignKey("ingestion_jobs.job_id", ondelete="CASCADE"), nullable=False, unique=True)
+    tenant_id = Column(String(64), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(32), nullable=False)
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    stats = Column(JSONB, server_default="{}", nullable=False)
+    errors = Column(JSONB, server_default="[]", nullable=False)
+    logs = Column(JSONB, server_default="[]", nullable=False)
+    promoted_version_id = Column(String(64), nullable=True)
+    __table_args__ = (Index("idx_ingestion_runs_tenant_started", "tenant_id", "started_at"),)
+
+
+class IngestionItem(Base):
+    __tablename__ = "ingestion_items"
+
+    item_id = Column(String(64), primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id = Column(String(64), ForeignKey("ingestion_runs.run_id", ondelete="CASCADE"), nullable=False)
+    tenant_id = Column(String(64), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(String(64), nullable=False)
+    status = Column(String(32), nullable=False)
+    attempts = Column(Integer(), server_default="0", nullable=False)
+    content_hash = Column(String(64), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    __table_args__ = (
+        Index("idx_ingestion_items_run_status", "run_id", "status"),
+        Index("idx_ingestion_items_tenant_product", "tenant_id", "product_id"),
+    )
+
+
 # E-commerce Core Entities (Backing OrderPort and CatalogPort in PostgreSQL)
 class ProductModel(Base):
     __tablename__ = "products"
@@ -313,6 +357,8 @@ class ProductModel(Base):
     name = Column(String(255), nullable=False)
     brand = Column(String(128), nullable=False)
     category = Column(String(64), nullable=False)
+    description = Column(Text, nullable=False, default="")
+    faqs = Column(JSONB, server_default="[]", nullable=False)
     aliases = Column(JSONB, server_default="[]", nullable=False)
     active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -329,6 +375,7 @@ class ProductSpecModel(Base):
     spec_key = Column(String(128), nullable=False)
     spec_value = Column(Text, nullable=False)
     unit = Column(String(32), nullable=True)
+    version_id = Column(String(64), ForeignKey("knowledge_versions.version_id", ondelete="CASCADE"), nullable=True)
 
     product = relationship("ProductModel", back_populates="specs")
 
@@ -346,13 +393,25 @@ class ProductPriceModel(Base):
     product = relationship("ProductModel", back_populates="pricing")
 
 
+class CustomerModel(Base):
+    __tablename__ = "customers"
+
+    customer_id = Column(String(64), primary_key=True)
+    tenant_id = Column(String(64), default="tenant_novaretail", nullable=False)
+    phone_hash = Column(String(64), nullable=False, unique=True)
+    email = Column(String(255), nullable=False, unique=True)
+    full_name = Column(String(255), nullable=False)
+    language_pref = Column(String(16), default="en", nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class OrderModel(Base):
     __tablename__ = "orders"
 
     order_id = Column(String(64), primary_key=True)
     tenant_id = Column(String(64), default="tenant_novaretail", nullable=False)
     customer_id = Column(String(64), nullable=False, index=True)
-    total_amount_inr = Column(Integer(), nullable=False)
+    total_amount_inr = Column(Numeric(12, 2), nullable=False)
     status = Column(String(32), nullable=False)
     tracking_number = Column(String(128), nullable=True)
     courier_name = Column(String(64), nullable=True)
@@ -371,10 +430,10 @@ class OrderItemModel(Base):
     product_id = Column(String(64), nullable=True)
     product_name = Column(String(255), nullable=False)
     category = Column(String(64), nullable=False)
-    price = Column(Integer(), nullable=False)
+    price = Column(Numeric(12, 2), nullable=False)
     quantity = Column(Integer(), default=1, nullable=False)
     is_digital = Column(Boolean, default=False, nullable=False)
     is_refunded = Column(Boolean, default=False, nullable=False)
+    refund_eligibility_verified = Column(Boolean, default=True, nullable=False)
 
     order = relationship("OrderModel", back_populates="items")
-

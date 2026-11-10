@@ -4,6 +4,7 @@ Validates Specification Sections 1.3, 10, and 15.1.
 """
 
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 import unittest
 import sys
 from pathlib import Path
@@ -165,6 +166,38 @@ class TestCorePolicyEngine(unittest.TestCase):
         )
         self.assertFalse(eligible)
         self.assertIn("can only be requested for delivered orders", reason)
+
+    def test_unknown_item_metadata_fails_closed(self):
+        item = OrderItem(
+            item_id="ITM-UNKNOWN", product_id="X", product_name="Unclassified item",
+            category="unknown", price=Decimal("1200.75"), refund_eligibility_verified=False
+        )
+        order = Order("ORD-UNKNOWN", "CUST-42", [item], Decimal("1200.75"), OrderStatus.DELIVERED,
+                      self.valid_delivered_at, self.valid_delivered_at)
+        eligible, reason, amount = check_refund_eligibility(order, current_time=self.now)
+        self.assertFalse(eligible)
+        self.assertEqual(amount, 0)
+        self.assertIn("could not be verified", reason)
+
+    def test_future_delivery_date_fails_closed(self):
+        order = Order("ORD-FUTURE", "CUST-42", self.sample_order.items, 1499, OrderStatus.DELIVERED,
+                      self.now, self.now + timedelta(days=1))
+        eligible, reason, amount = check_refund_eligibility(order, current_time=self.now)
+        self.assertFalse(eligible)
+        self.assertEqual(amount, 0)
+        self.assertIn("in the future", reason)
+
+    def test_decimal_amount_and_idempotency_preserve_paise(self):
+        item = OrderItem("ITM-PAISE", "X", "Camera", "electronics", Decimal("11188.82"))
+        order = Order("ORD-PAISE", "CUST-42", [item], Decimal("11188.82"), OrderStatus.DELIVERED,
+                      self.valid_delivered_at, self.valid_delivered_at)
+        eligible, _, amount = check_refund_eligibility(order, current_time=self.now)
+        self.assertTrue(eligible)
+        self.assertEqual(amount, Decimal("11188.82"))
+        self.assertNotEqual(
+            generate_idempotency_key("t", "c", "o", Decimal("1999.99")),
+            generate_idempotency_key("t", "c", "o", Decimal("2000.00")),
+        )
 
     def test_evaluate_refund_state_under_limit(self):
         state = evaluate_refund_state(amount_inr=1499, auto_limit_inr=2000)

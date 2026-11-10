@@ -8,6 +8,7 @@ All rules regarding money, identity, and permissions are enforced here in pure P
 
 import hashlib
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from typing import Optional
 
 try:
@@ -88,6 +89,8 @@ def check_refund_eligibility(
 
     # 1. Return window check
     elapsed = now - delivered_at
+    if elapsed < timedelta(0):
+        return False, "Order delivery timestamp is in the future. Please contact human support.", 0
     if elapsed > timedelta(days=return_window_days):
         days_past = elapsed.days
         return (
@@ -107,7 +110,7 @@ def check_refund_eligibility(
         target_items = order.items
 
     # 3. Check digital goods & previous refund status
-    eligible_amount = 0
+    eligible_amount = Decimal("0.00")
     for item in target_items:
         if item.is_refunded:
             return (
@@ -115,13 +118,15 @@ def check_refund_eligibility(
                 f"Item '{item.product_name}' has already been refunded.",
                 0
             )
+        if not item.refund_eligibility_verified:
+            return False, f"Refund eligibility details for '{item.product_name}' could not be verified. Please contact human support.", 0
         if item.is_digital or item.category.lower() == "digital":
             return (
                 False,
                 f"Item '{item.product_name}' is a digital product / gift card and is non-refundable once delivered under Store Policy 6.0.",
                 0
             )
-        eligible_amount += item.price * item.quantity
+        eligible_amount += Decimal(str(item.price)) * item.quantity
 
     if eligible_amount <= 0:
         return False, "No eligible items for refund.", 0
@@ -130,15 +135,15 @@ def check_refund_eligibility(
 
 
 def evaluate_refund_state(
-    amount_inr: int,
-    auto_limit_inr: int = DEFAULT_REFUND_AUTO_LIMIT_INR
+    amount_inr: Decimal | int,
+    auto_limit_inr: Decimal | int = DEFAULT_REFUND_AUTO_LIMIT_INR
 ) -> RefundState:
     """
     Determine whether refund can be auto-processed or requires executive approval:
     - Amount <= auto_limit_inr (e.g. ₹2,000) -> PROCESSED
     - Amount > auto_limit_inr               -> PENDING_APPROVAL
     """
-    if amount_inr <= auto_limit_inr:
+    if Decimal(str(amount_inr)) <= Decimal(str(auto_limit_inr)):
         return RefundState.PROCESSED
     return RefundState.PENDING_APPROVAL
 
@@ -154,5 +159,6 @@ def generate_idempotency_key(
     Generate deterministic idempotency key for payment gateway safety.
     Prevents double-charging or double-refunding across network retries.
     """
-    raw = f"{tenant_id}:{customer_id}:{order_id}:{item_id or 'all'}:{amount_inr}"
+    amount_key = format(Decimal(str(amount_inr)).quantize(Decimal("0.01")), "f")
+    raw = f"{tenant_id}:{customer_id}:{order_id}:{item_id or 'all'}:{amount_key}"
     return "ref_idem_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
