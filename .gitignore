@@ -19,3 +19,6 @@ test_concurrency_*.db
 master-dashboard/screenshot_*.png
 scratch/
 whatsapp-openwa/novaretail-support.data.json
+
+# Local checkout of the upstream OpenWA gateway (managed in its own Git repository)
+/openwa-gateway/

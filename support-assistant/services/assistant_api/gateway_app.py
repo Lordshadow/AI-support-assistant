@@ -30,6 +30,7 @@ from dataclasses import replace
 from pydantic import BaseModel, Field
 
 from core.models import SessionContext, AuthLevel, PageContext
+from core.router.normalizer import LanguageNormalizer
 from services.assistant_api.jwt_auth import verify_customer_token
 from services.assistant_api.otp_service import OTPService
 from services.assistant_api.whatsapp_security import WhatsAppSecurity
@@ -120,7 +121,8 @@ class GatewayApp:
         self.otp_delivery = otp_delivery
         self.speech_adapter = speech_adapter
         self.openwa_shared_secret = (openwa_shared_secret or os.getenv("OPENWA_SHARED_SECRET", "")).strip()
-        self._openwa_processed_ids: set[str] = set()
+        self._openwa_processed_ids: Dict[str, Dict[str, Any]] = {}
+        self._openwa_inflight_ids: set[str] = set()
         self.tenant_aliases = dict(tenant_aliases or {})
         self.tenant_origins = tenant_origins if tenant_origins is not None else {
             "demo-shop": ["https://shop.novaretail.com", "http://localhost:3000", "http://127.0.0.1:3000"],
@@ -132,6 +134,7 @@ class GatewayApp:
         # Session storage: (tenant_id, conv_id) -> SessionContext
         self._session_store: Dict[Tuple[str, str], SessionContext] = {}
         self._storefront_otp_challenges: Dict[str, Tuple[str, str, str]] = {}
+        self._openwa_auth_challenges: Dict[Tuple[str, str], str] = {}
 
     def is_origin_allowed(self, tenant_id: str, origin: Optional[str]) -> bool:
         """
@@ -459,6 +462,8 @@ class GatewayApp:
         if not message_id or not sender or payload.get("from_me"):
             return 422, {"detail": "A valid incoming message ID and sender are required."}
         if message_id in self._openwa_processed_ids:
+            return 200, self._openwa_processed_ids[message_id]
+        if message_id in self._openwa_inflight_ids:
             return 200, {"status": "duplicate_ignored", "message_id": message_id}
 
         message_type = str(payload.get("type", "chat")).lower()
@@ -487,17 +492,86 @@ class GatewayApp:
         if not user_message.strip():
             return 200, {"status": "empty_message", "reply": "Please send a text message or a voice note."}
 
-        self._openwa_processed_ids.add(message_id)
-        if len(self._openwa_processed_ids) > 10000:
-            self._openwa_processed_ids.clear()
-            self._openwa_processed_ids.add(message_id)
         conv_id = f"wa_{sender}"
         session = self.get_or_create_session("demo-shop", conv_id, auth_header=None, channel="whatsapp")
-        result = await self.orchestrator.process_turn(user_message=user_message, ctx=session)
+        auth_key = ("demo-shop", conv_id)
+        storefront_url = os.getenv("APEXSTORE_CATALOG_API_URL", "").rstrip("/")
+        storefront_api_key = os.getenv("APEXSTORE_CATALOG_API_TOKEN", "").strip()
+        email_match = re.fullmatch(r"(?:login|verify account|account)\s+([^\s@]+@[^\s@]+)", user_message.strip(), re.IGNORECASE)
+        code_match = re.fullmatch(r"(?:code\s+)?(\d{6})", user_message.strip(), re.IGNORECASE)
+        if email_match and not session.customer_id:
+            if not storefront_url or not storefront_api_key:
+                auth_reply = "Account verification is temporarily unavailable. Please try again later."
+            else:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=3.0)) as client:
+                        auth_response = await client.post(
+                            f"{storefront_url}/whatsapp-auth/request-code",
+                            headers={"Authorization": f"Bearer {storefront_api_key}"},
+                            json={"email": email_match.group(1)},
+                        )
+                    if auth_response.status_code == 200:
+                        self._openwa_auth_challenges[auth_key] = email_match.group(1).strip().lower()
+                        auth_reply = "If that verified account exists, a 6-digit code was sent to its email. Reply with the code to securely connect your WhatsApp chat."
+                    else:
+                        auth_reply = "I couldn't start account verification. Please try again later."
+                except Exception:
+                    logger.exception("Could not request WhatsApp account verification code")
+                    auth_reply = "I couldn't start account verification. Please try again later."
+            language = LanguageNormalizer.detect_language(user_message)
+            if language == "ta":
+                auth_reply = "அந்த சரிபார்க்கப்பட்ட கணக்கு இருந்தால், அதன் மின்னஞ்சலுக்கு 6 இலக்க குறியீடு அனுப்பியுள்ளோம். WhatsApp-ஐ இணைக்க அந்த குறியீட்டை இங்கே அனுப்புங்கள்." if "sent" in auth_reply else "கணக்கு சரிபார்ப்பை இப்போது தொடங்க முடியவில்லை. பிறகு முயற்சிக்கவும்."
+            elif language == "tanglish":
+                auth_reply = "Verified account irundha, adhodu email-ku 6 digit code anuppirukkom. WhatsApp chat connect panna code-a inga reply pannunga." if "sent" in auth_reply else "Account verify panna ippo mudiyala. Konjam neram kazhichu try pannunga."
+            response = {"status": "processed", "message_id": message_id, "reply": auth_reply, "language": language}
+            self._openwa_processed_ids[message_id] = response
+            return 200, response
+        pending_email = self._openwa_auth_challenges.get(auth_key)
+        if code_match and pending_email and not session.customer_id:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=3.0)) as client:
+                    auth_response = await client.post(
+                        f"{storefront_url}/whatsapp-auth/verify-code",
+                        headers={"Authorization": f"Bearer {storefront_api_key}"},
+                        json={"email": pending_email, "code": code_match.group(1)},
+                    )
+                if auth_response.status_code == 200:
+                    identity = auth_response.json()
+                    if not str(identity.get("customer_id", "")).isdigit() or not identity.get("customer_token"):
+                        raise ValueError("Storefront returned invalid WhatsApp identity")
+                    session = replace(session, customer_id=str(identity["customer_id"]), level=AuthLevel.IDENTIFIED,
+                                     storefront_customer_token=identity["customer_token"])
+                    self._session_store[auth_key] = session
+                    self._openwa_auth_challenges.pop(auth_key, None)
+                    auth_reply = "Your account is verified for this WhatsApp chat. Send your order ID to check tracking or start a refund request. Refund requests still need a separate email verification code."
+                else:
+                    auth_reply = "That code is invalid or expired. Send 'login your-email@example.com' to request a new code."
+            except Exception:
+                logger.exception("Could not verify WhatsApp account code")
+                auth_reply = "I couldn't verify that code right now. Please try again."
+            language = LanguageNormalizer.detect_language(user_message)
+            if language == "ta":
+                auth_reply = "உங்கள் கணக்கு இந்த WhatsApp உரையாடலுடன் சரிபார்க்கப்பட்டது. டிராக்கிங் பார்க்க அல்லது ரீஃபண்ட் கோர உங்கள் ஆர்டர் ID-ஐ அனுப்புங்கள். ரீஃபண்டுக்கு தனி மின்னஞ்சல் குறியீடு தேவை."
+            elif language == "tanglish":
+                auth_reply = "Unga account indha WhatsApp chat-oda verify aayiduchu. Tracking paakka illa refund request panna order ID anuppunga. Refund-ku separate email code thevai."
+            response = {"status": "processed", "message_id": message_id, "reply": auth_reply, "language": language}
+            self._openwa_processed_ids[message_id] = response
+            return 200, response
+        self._openwa_inflight_ids.add(message_id)
+        try:
+            result = await self.orchestrator.process_turn(user_message=user_message, ctx=session)
+        finally:
+            self._openwa_inflight_ids.discard(message_id)
         response = {"status": "processed", "message_id": message_id, "reply": result.reply,
                     "language": result.language, "trace_id": result.trace_id}
         if transcription_info:
             response["transcription"] = transcription_info
+        if len(self._openwa_processed_ids) >= 10000:
+            oldest_message_id = next(iter(self._openwa_processed_ids))
+            self._openwa_processed_ids.pop(oldest_message_id, None)
+        self._openwa_processed_ids[message_id] = response
         return 200, response
 
     async def handle_send_otp(self, payload: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
@@ -865,7 +939,7 @@ class GatewayApp:
                     response_body = json.dumps(resp).encode("utf-8")
                 except Exception as error:
                     debug_code = f"CHAT-{uuid.uuid4().hex[:12].upper()}"
-                    logger.exception(
+                    logger.error(
                         "Unhandled chat request failure; debug_code=%s exception_type=%s",
                         debug_code,
                         type(error).__name__,

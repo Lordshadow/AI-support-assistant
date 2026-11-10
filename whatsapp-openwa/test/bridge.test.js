@@ -1,65 +1,91 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { processIncomingMessage } from '../src/bridge.js';
-import { toQrSvg, writePairingQr } from '../src/qr.js';
+import { createHmac } from 'node:crypto';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { handleWebhookRequest, processOpenWaEvent, verifyOpenWaSignature } from '../src/bridge.js';
 
-test('forwards decrypted WhatsApp voice-note bytes and replies in the same chat', async () => {
-  let request;
-  let reply;
-  const client = {
-    async decryptMedia() { return 'data:audio/ogg;base64,' + Buffer.from('synthetic voice sample').toString('base64'); },
-    async reply(...args) { reply = args; },
-  };
-  const result = await processIncomingMessage({
-    id: 'msg-voice-1', from: '123@c.us', type: 'ptt', mimetype: 'audio/ogg; codecs=opus', body: '',
-  }, client, {
-    apiUrl: 'http://assistant/integrations/openwa/messages', sharedSecret: 'x'.repeat(40),
-    fetch: async (url, options) => {
-      request = { url, options };
-      return { ok: true, async json() { return { status: 'processed', reply: 'Your order is on its way.' }; } };
-    },
+const config = {
+  assistantUrl: 'http://assistant/integrations/openwa/messages',
+  assistantSecret: 'a'.repeat(40),
+  webhookSecret: 'w'.repeat(32),
+  apiUrl: 'http://openwa/api',
+  apiKey: 'openwa-test-key',
+  sessionId: 'session-123',
+};
+
+test('verifies OpenWA HMAC over the raw body in constant-time comparison', () => {
+  const body = Buffer.from('{"event":"message.received"}');
+  const signature = `sha256=${createHmac('sha256', config.webhookSecret).update(body).digest('hex')}`;
+  assert.equal(verifyOpenWaSignature(body, signature, config.webhookSecret), true);
+  assert.equal(verifyOpenWaSignature(body, `${signature}x`, config.webhookSecret), false);
+  assert.equal(verifyOpenWaSignature(body, undefined, config.webhookSecret), false);
+});
+
+test('forwards OpenWA text and sends assistant reply with OpenWA REST API', async () => {
+  const requests = [];
+  const result = await processOpenWaEvent({
+    event: 'message.received', sessionId: 'session-123', idempotencyKey: 'event-1',
+    data: { id: 'msg-1', from: '919876543210@c.us', chatId: '919876543210@c.us', body: 'Where is my order?', type: 'text' },
+  }, config, async (url, options) => {
+    requests.push({ url, options });
+    return requests.length === 1
+      ? { ok: true, async json() { return { status: 'processed', reply: 'Please share your order number.' }; } }
+      : { ok: true };
   });
-  assert.equal(result.status, 'processed');
-  assert.equal(request.url, 'http://assistant/integrations/openwa/messages');
-  assert.equal(request.options.headers.authorization, `Bearer ${'x'.repeat(40)}`);
-  const sent = JSON.parse(request.options.body);
-  assert.equal(sent.type, 'ptt');
-  assert.equal(sent.mime_type, 'audio/ogg; codecs=opus');
-  assert.equal(Buffer.from(sent.audio_base64, 'base64').toString(), 'synthetic voice sample');
-  assert.deepEqual(reply, ['123@c.us', 'Your order is on its way.', 'msg-voice-1']);
+  assert.deepEqual(result, { status: 'processed' });
+  assert.equal(requests[0].url, config.assistantUrl);
+  assert.equal(requests[0].options.headers.authorization, `Bearer ${config.assistantSecret}`);
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    message_id: 'msg-1', sender: '919876543210@c.us', type: 'chat', text: 'Where is my order?',
+  });
+  assert.equal(requests[1].url, 'http://openwa/api/sessions/session-123/messages/send-text');
+  assert.equal(requests[1].options.headers['X-API-Key'], config.apiKey);
+  assert.deepEqual(JSON.parse(requests[1].options.body), {
+    chatId: '919876543210@c.us', text: 'Please share your order number.',
+  });
 });
 
-test('ignores own messages and group messages', async () => {
-  const client = {};
-  const config = { fetch: async () => { throw new Error('must not call API'); } };
-  assert.deepEqual(await processIncomingMessage({ fromMe: true }, client, config), { ignored: true });
-  assert.deepEqual(await processIncomingMessage({ fromMe: false, isGroupMsg: true }, client, config), { ignored: true });
+test('ignores group, own, and non-message events', async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls += 1; throw new Error('must not call services'); };
+  assert.deepEqual(await processOpenWaEvent({ event: 'session.status' }, config, fetchImpl), { ignored: true });
+  assert.deepEqual(await processOpenWaEvent({ event: 'message.received', data: { fromMe: true } }, config, fetchImpl), { ignored: true });
+  assert.deepEqual(await processOpenWaEvent({ event: 'message.received', data: { isGroup: true } }, config, fetchImpl), { ignored: true });
+  assert.equal(calls, 0);
 });
 
-test('rejects oversized decrypted audio before forwarding', async () => {
-  const client = { async decryptMedia() { return `data:audio/ogg;base64,${Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64')}`; } };
-  await assert.rejects(processIncomingMessage({
-    id: 'msg-too-large', from: '123@c.us', type: 'audio', mimetype: 'audio/ogg',
-  }, client, { fetch: async () => assert.fail('must not forward oversized media') }), /20 MB limit/);
-});
-
-test('renders the pairing token into a scannable SVG matrix', () => {
-  const svg = toQrSvg('openwa-test-pairing-token');
-  assert.match(svg, /^<svg /);
-  assert.match(svg, /<path d="M/);
-  assert.match(svg, /shape-rendering="crispEdges"/);
-});
-
-test('writes the current pairing code as a PNG image', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openwa-qr-test-'));
+test('rejects unsigned webhook before parsing or forwarding', async () => {
+  const server = createServer((req, res) => void handleWebhookRequest(req, res, config));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
   try {
-    const file = await writePairingQr('openwa-test-pairing-token', dir);
-    const pngHeader = fs.readFileSync(file).subarray(0, 8);
-    assert.deepEqual([...pngHeader], [137, 80, 78, 71, 13, 10, 26, 10]);
+    const { port } = server.address();
+    const response = await fetch(`http://127.0.0.1:${port}/webhooks/openwa`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{invalid',
+    });
+    assert.equal(response.status, 401);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    server.close();
+  }
+});
+
+test('accepts correctly signed events and rejects malformed JSON', async () => {
+  const server = createServer((req, res) => void handleWebhookRequest(req, res, config, async () => ({ ok: true, async json() { return {}; } })));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/webhooks/openwa`;
+    const body = Buffer.from('{"event":"session.status"}');
+    const signature = `sha256=${createHmac('sha256', config.webhookSecret).update(body).digest('hex')}`;
+    const valid = await fetch(url, { method: 'POST', headers: { 'X-OpenWA-Signature': signature }, body });
+    assert.equal(valid.status, 200);
+    const invalid = await fetch(url, {
+      method: 'POST', headers: { 'X-OpenWA-Signature': signature }, body: '{bad json',
+    });
+    assert.equal(invalid.status, 401);
+  } finally {
+    server.close();
   }
 });

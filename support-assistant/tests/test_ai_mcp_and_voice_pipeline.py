@@ -416,7 +416,10 @@ class TestAIMCPAndVoicePipeline(unittest.IsolatedAsyncioTestCase):
                 json=payload,
                 headers={"Authorization": "Bearer qa-openwa-bridge-secret-40-characters-long"},
             )
-            self.assertEqual(duplicate.json()["status"], "duplicate_ignored")
+            replay = duplicate.json()
+            self.assertEqual(replay["status"], "processed")
+            self.assertEqual(replay["reply"], data["reply"])
+            self.assertEqual(replay["trace_id"], data["trace_id"])
 
 
 if __name__ == "__main__":
