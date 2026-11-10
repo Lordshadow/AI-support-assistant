@@ -10,3 +10,12 @@ venv/
 SkillOpt/
 .DS_Store
 Thumbs.db
+
+# Local secrets, QA artifacts, and scratch outputs
+.env.*
+!.env.example
+cookies.txt
+test_concurrency_*.db
+master-dashboard/screenshot_*.png
+scratch/
+whatsapp-openwa/novaretail-support.data.json

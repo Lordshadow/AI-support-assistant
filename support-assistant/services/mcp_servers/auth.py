@@ -33,6 +33,8 @@ def mint_internal_token(
         "tenant_id": ctx.tenant_id,
         "conv_id": ctx.conv_id,
         "customer_id": ctx.customer_id,
+        "storefront_customer_token": ctx.storefront_customer_token,
+        "storefront_refund_verification_token": ctx.storefront_refund_verification_token,
         "level": ctx.level.value,
         "channel": ctx.channel,
         "iat": int(now.timestamp()),
@@ -62,7 +64,9 @@ def ctx_from_token(
             conv_id=payload["conv_id"],
             customer_id=payload.get("customer_id"),
             level=AuthLevel(payload.get("level", "anonymous")),
-            channel=payload.get("channel", "web")
+            channel=payload.get("channel", "web"),
+            storefront_customer_token=payload.get("storefront_customer_token"),
+            storefront_refund_verification_token=payload.get("storefront_refund_verification_token"),
         )
     except Exception as e:
         # Fall back to anonymous session if token is invalid or missing

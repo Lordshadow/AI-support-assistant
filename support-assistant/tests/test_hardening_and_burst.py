@@ -171,17 +171,18 @@ class TestHardeningAndBurst(unittest.TestCase):
 
     def test_spend_cap_gate_under_concurrent_burst(self):
         """
-        Verify that a burst of 15 concurrent turns arriving when spend is at ₹2,490
+        Verify that a burst of 15 concurrent turns arriving when spend is at ₹2,480
         allows exactly 1 model call and strictly gates the remaining 14 turns without token leakage.
         """
         from services.worker.spend_manager import spend_manager
 
-        # Seed spend bucket to ₹2,490 (just ₹10 below the ₹2,500 daily hard cap)
+        # One ₹15 reservation fits at ₹2,480; the next reservation must be gated.
         bucket = spend_manager._get_cache_bucket(self.tenant_id)
-        bucket["daily_spend"] = 2490.0
+        bucket["daily_spend"] = 2480.0
         bucket["daily_cap"] = 2500.0
         bucket["monthly_spend"] = 5000.0
         bucket["monthly_cap"] = 50000.0
+        bucket["in_flight"] = 0.0
 
         # Create Mock LLM Client that tracks invocation count
         class BurstTrackingLLM:
@@ -239,7 +240,20 @@ class TestHardeningAndBurst(unittest.TestCase):
             results = await asyncio.gather(*tasks)
             return results
 
-        results = run_async(run_burst())
+        # Keep this hot-path concurrency test independent of the live persisted
+        # ledger; its cap boundary is the explicitly seeded in-memory bucket.
+        from db import session as db_session
+
+        class NoPersistedTenant:
+            async def get(self, *_args, **_kwargs):
+                return None
+
+        @db_session.asynccontextmanager
+        async def isolated_session(tenant_id=None):
+            yield NoPersistedTenant()
+
+        with patch("services.worker.spend_manager.get_async_session", side_effect=isolated_session):
+            results = run_async(run_burst())
 
         # Assertions
         # 1. Exactly 1 LLM call was allowed through before the cap was hit

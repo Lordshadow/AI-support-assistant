@@ -174,12 +174,16 @@ class PostgresOrderRepository:
         except Exception as e:
             logger.warning("Error saving order %s to postgres: %s", order.order_id, e)
 
-    async def _fetch_from_store_api(self, customer_id: str, order_id: str) -> Optional[Order]:
+    async def _fetch_from_store_api(
+        self, customer_id: str, order_id: str, customer_token: Optional[str] = None
+    ) -> Optional[Order]:
         if not self.store_api_url or not self.store_api_token:
             return None
         url = f"{self.store_api_url}/orders/{order_id}"
         headers = {"Authorization": f"Bearer {self.store_api_token}"}
         params = {"customer_id": customer_id}
+        if customer_token:
+            params["customer_token"] = customer_token
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 res = await client.get(url, headers=headers, params=params)
@@ -196,9 +200,15 @@ class PostgresOrderRepository:
             logger.debug("Store API get_order fallback failed: %s", e)
             return None
 
-    async def get_order(self, customer_id: str, order_id: str) -> Optional[Order]:
+    async def get_order(
+        self, customer_id: str, order_id: str, customer_token: Optional[str] = None
+    ) -> Optional[Order]:
         cid = str(customer_id)
         oid = str(order_id).strip().upper()
+        # Storefront identities must be checked by the storefront's signature
+        # verifier. Never fall back to cached local rows if that check fails.
+        if customer_token:
+            return await self._fetch_from_store_api(cid, oid, customer_token=customer_token)
         try:
             async with get_async_session(tenant_id=self.tenant_id) as session:
                 stmt = (
@@ -221,8 +231,29 @@ class PostgresOrderRepository:
         # Fallback to store API
         return await self._fetch_from_store_api(cid, oid)
 
-    async def list_recent_orders(self, customer_id: str, limit: int = 5) -> List[Order]:
+    async def list_recent_orders(
+        self, customer_id: str, limit: int = 5, customer_token: Optional[str] = None
+    ) -> List[Order]:
         cid = str(customer_id)
+        if customer_token:
+            if not self.store_api_url or not self.store_api_token:
+                return []
+            url = f"{self.store_api_url}/customers/{cid}/orders"
+            headers = {"Authorization": f"Bearer {self.store_api_token}"}
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    res = await client.get(url, headers=headers, params={"limit": limit, "customer_token": customer_token})
+                    if res.status_code != 200:
+                        return []
+                    domains = []
+                    for od in res.json().get("orders", []):
+                        dom = self._dict_to_domain(od, cid)
+                        await self._save_order_to_db(dom)
+                        domains.append(dom)
+                    return domains
+            except Exception as e:
+                logger.debug("Store API list_recent_orders failed: %s", e)
+                return []
         try:
             async with get_async_session(tenant_id=self.tenant_id) as session:
                 stmt = (
@@ -264,8 +295,10 @@ class PostgresOrderRepository:
 
         return []
 
-    async def get_tracking(self, customer_id: str, order_id: str) -> List[TrackingEvent]:
-        order = await self.get_order(customer_id, order_id)
+    async def get_tracking(
+        self, customer_id: str, order_id: str, customer_token: Optional[str] = None
+    ) -> List[TrackingEvent]:
+        order = await self.get_order(customer_id, order_id, customer_token=customer_token)
         if not order:
             return []
 

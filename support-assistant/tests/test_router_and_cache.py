@@ -113,6 +113,11 @@ class TestRouterAndCache(unittest.TestCase):
         self.assertEqual(decision.route_type, "small_model")
         self.assertEqual(decision.intent, "refund_request")
 
+    def test_refund_action_does_not_use_policy_template(self):
+        decision = run_sync(self.router.route_message("refund", self.ident_ctx))
+        self.assertNotEqual(decision.route_type, "template")
+        self.assertNotIn("specific order", decision.template_response or "")
+
 
 if __name__ == "__main__":
     unittest.main()

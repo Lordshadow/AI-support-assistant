@@ -133,6 +133,18 @@ class TurnRecorder:
                     async with get_async_session(tenant_id=tenant_id) as s:
                         await _execute(s)
             except Exception:
-                pass  # Graceful fallback if database is offline or not configured
+                # Graceful fallback: If database is offline, release reservation and update in-memory bucket
+                if (tokens_prompt + tokens_completion) > 0 and model_name:
+                    try:
+                        from services.worker.spend_manager import compute_cost_inr
+                        cost_inr = compute_cost_inr(model_name, tokens_prompt, tokens_completion)
+                        bucket = spend_manager._get_cache_bucket(tenant_id)
+                        bucket["in_flight"] = max(0.0, bucket.get("in_flight", 0.0) - 15.0)
+                        bucket["daily_spend"] += cost_inr
+                        bucket["monthly_spend"] += cost_inr
+                    except Exception:
+                        spend_manager.release_reservation(tenant_id)
+                else:
+                    spend_manager.release_reservation(tenant_id)
 
         return turn_id

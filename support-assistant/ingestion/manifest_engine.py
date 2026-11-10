@@ -22,24 +22,114 @@ Key Architecture Rules:
 """
 
 from datetime import datetime, timezone
+import asyncio
 import hashlib
 import io
+import json
+import logging
+import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import uuid
 
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
     KnowledgeVersion, KnowledgeChunk, KnowledgeVersionChunk,
-    IngestionJob, Tenant, TenantPolicyConfig, AuditEvent, ProductModel
+    IngestionJob, IngestionRun, IngestionItem, Tenant, TenantPolicyConfig, AuditEvent,     ProductModel, ProductSpecModel, ProductPriceModel
 )
 from core.router.cache import CacheService
+from core.ports import VectorStorePort
+from adapters.postgres.vector_store import PostgresVectorStore
+from ingestion.embedder import DeterministicLocalEmbedder, NIMEmbedder
+from ingestion.catalog_documents import CatalogProduct, build_product_chunks
 
 
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_EMBEDDING_MODEL = os.getenv("CATALOG_EMBEDDING_MODEL", "baai/bge-m3")
 DEFAULT_CHUNKER_VERSION = "v1.0"
+logger = logging.getLogger(__name__)
+
+
+class ResilientEmbedder:
+    """Primary embedder with seamless deterministic offline fallback on upstream failure."""
+    def __init__(self, primary, fallback):
+        self.primary = primary
+        self.fallback = fallback
+        self.dimension = getattr(fallback, "dimension", 1024)
+
+    async def embed_query(self, text: str) -> list[float]:
+        try:
+            return await self.primary.embed_query(text)
+        except Exception as exc:
+            logger.warning("Primary neural embedder query failed, falling back to local embedder: %s", exc)
+            return await self.fallback.embed_query(text)
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        try:
+            return await self.primary.embed_documents(texts)
+        except Exception as exc:
+            logger.warning("Primary neural embedder batch failed, falling back to local embedder: %s", exc)
+            return await self.fallback.embed_documents(texts)
+
+
+def _catalog_embedder():
+    """Select the environment-configured 1024-dimension embedder with automatic fallback."""
+    local_embedder = DeterministicLocalEmbedder(
+        dimension=1024,
+        model=(os.getenv("CATALOG_EMBEDDING_MODEL") or "baai/bge-m3").strip(),
+    )
+    api_key = os.getenv("NVIDIA_NIM_API_KEY", "").strip()
+    if api_key and os.getenv("CATALOG_EMBEDDER_TYPE", "").lower() != "local":
+        model = (os.getenv("CATALOG_EMBEDDING_MODEL") or "baai/bge-m3").strip()
+        base_url = (os.getenv("NVIDIA_NIM_BASE_URL") or "https://integrate.api.nvidia.com/v1").strip()
+        if model and base_url:
+            nim = NIMEmbedder(
+                api_key=api_key,
+                model=model,
+                base_url=base_url,
+                dimension=1024,
+            )
+            return ResilientEmbedder(nim, local_embedder)
+    return local_embedder
+
+
+def _sanitize_string(val: str) -> str:
+    """Sanitize secrets, auth tokens, and customer PII from strings."""
+    val = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1[redacted]", val)
+    val = re.sub(r"(?i)(api[_ -]?key|token|secret|password|authorization)(\s*[:=]\s*)[^\s,;]+", r"\1\2[redacted]", val)
+    val = re.sub(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", "[email redacted]", val)
+    val = re.sub(r"(?:\+91|0)?[6-9]\d{9}", "[phone redacted]", val)
+    return val
+
+
+def _sanitize_obj(obj: Any) -> Any:
+    """Recursively sanitize PII and credentials from dicts, lists, and primitives."""
+    if isinstance(obj, str):
+        return _sanitize_string(obj)
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_obj(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_obj(item) for item in obj]
+    if isinstance(obj, (int, float, bool)) or obj is None:
+        return obj
+    return _sanitize_string(str(obj))
+
+
+def _safe_error(exc: Exception) -> str:
+    """Keep exception summaries useful without echoing payloads or credentials."""
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            details = errors(include_input=False)
+            summary = "; ".join(f"{'.'.join(map(str, item.get('loc', ())))}: {item.get('msg', 'invalid value')}" for item in details)
+        except Exception:
+            summary = type(exc).__name__
+    else:
+        summary = str(exc)
+    summary = _sanitize_string(summary)
+    return summary[:500]
 
 
 def generate_chunk_id(
@@ -166,11 +256,30 @@ def parse_policy_clauses(text: str) -> List[Dict[str, Any]]:
     return clauses
 
 
+class JobCancelledException(Exception):
+    """Raised when an ingestion job is cancelled by staff."""
+    pass
+
+
 class KnowledgeManifestEngine:
     """Coordinates version manifests, async ingestion, eval gates, and atomic promotions."""
 
-    def __init__(self, cache_service: Optional[CacheService] = None):
+    def __init__(self, cache_service: Optional[CacheService] = None, vector_store: Optional[VectorStorePort] = None):
         self.cache_service = cache_service or CacheService()
+        self.vector_store = vector_store or PostgresVectorStore()
+        self._cancelled_jobs: set[str] = set()
+        self._active_tasks: dict[str, asyncio.Task] = {}
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Flag job as cancelled and interrupt active running asyncio task if present."""
+        self._cancelled_jobs.add(job_id)
+        task = self._active_tasks.get(job_id)
+        if task and not task.done():
+            task.cancel()
+        return True
+
+    def is_job_cancelled(self, job_id: str) -> bool:
+        return job_id in self._cancelled_jobs
 
     async def create_policy_draft(
         self,
@@ -245,143 +354,413 @@ class KnowledgeManifestEngine:
         staff_id: str,
         session: AsyncSession,
         products_override: Optional[List[Dict[str, Any]]] = None,
+        ingestion_job_id: Optional[str] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        staff_role: str = "manager",
+        retry_product_ids: Optional[list[str]] = None,
     ) -> IngestionJob:
-        """
-        Executes catalog ingestion with strict Deletion Guard protection (> 20% drop aborts).
-        Deduplicates content-addressed chunks into knowledge_chunks and links to draft version.
-        """
-        # 1. Enforce 1 active job per tenant
+        """Fetch, validate, incrementally embed, and stage a catalog draft."""
         stmt_active = select(IngestionJob).where(
             IngestionJob.tenant_id == tenant_id,
             IngestionJob.source_type == "catalog",
-            IngestionJob.status.in_(["queued", "running"])
+            IngestionJob.status.in_(["queued", "running"]),
         )
+        if ingestion_job_id:
+            stmt_active = stmt_active.where(IngestionJob.job_id != ingestion_job_id)
         active_job = (await session.execute(stmt_active)).scalars().first()
         if active_job:
-            raise RuntimeError(
-                f"Active ingestion job '{active_job.job_id}' is already in progress for tenant '{tenant_id}'."
+            raise RuntimeError(f"Active ingestion job '{active_job.job_id}' is already in progress for tenant '{tenant_id}'.")
+
+        job = await session.get(IngestionJob, ingestion_job_id) if ingestion_job_id else None
+        if job and job.tenant_id != tenant_id:
+            raise ValueError("Catalog ingestion job does not belong to this tenant.")
+        if not job:
+            job = IngestionJob(
+                job_id=f"job_cat_{uuid.uuid4().hex[:12]}", tenant_id=tenant_id,
+                source_type="catalog", status="running", progress_pct=5, stats={"products_seen": 0, "chunks_indexed": 0},
             )
-
-        job_id = f"job_cat_{uuid.uuid4().hex[:12]}"
-        job = IngestionJob(
-            job_id=job_id,
-            tenant_id=tenant_id,
-            source_type="catalog",
-            status="running",
-            progress_pct=10,
-            stats={}
-        )
-        session.add(job)
-        await session.flush()
-
-        # 2. Get baseline product count from current active catalog version
-        tenant = await session.get(Tenant, tenant_id)
-        prev_items = 0
-        if tenant and tenant.active_product_version:
-            prev_ver = await session.get(KnowledgeVersion, tenant.active_product_version)
-            if prev_ver and prev_ver.manifest:
-                prev_items = prev_ver.manifest.get("total_items", 0)
-
-        # 3. Fetch products to ingest
-        if products_override is not None:
-            products = products_override
+            session.add(job)
         else:
-            stmt_prods = select(ProductModel).where(
-                ProductModel.tenant_id == tenant_id,
-                ProductModel.active == True
-            )
-            db_prods = (await session.execute(stmt_prods)).scalars().all()
-            products = [
-                {
-                    "product_id": p.product_id,
-                    "name": p.name,
-                    "brand": p.brand,
-                    "category": p.category,
-                    "description": f"{p.name} by {p.brand} in {p.category} category."
+            job.status = "running"
+            job.progress_pct = 5
+            job.error_message = None
+        def report_progress():
+            if progress_callback:
+                progress_callback({
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "progress_pct": job.progress_pct,
+                    "error_message": job.error_message,
+                    "stats": dict(job.stats or {}),
+                })
+
+        await session.flush()
+        run = await session.scalar(select(IngestionRun).where(IngestionRun.job_id == job.job_id))
+        if not run:
+            run = IngestionRun(run_id=f"run_{job.job_id}", job_id=job.job_id, tenant_id=tenant_id,
+                               status="running", stats={})
+            session.add(run)
+        run.status = "running"
+        started = time.monotonic()
+
+        def log_event(event: str, **details: Any) -> None:
+            safe_details = _sanitize_obj(details)
+            safe_event = {"timestamp": datetime.now(timezone.utc).isoformat(), "run_id": run.run_id,
+                          "job_id": job.job_id, "event": event, **safe_details}
+            run.logs = [*(run.logs or []), safe_event]
+            logger.info(json.dumps(safe_event, ensure_ascii=False, separators=(",", ":")))
+
+        log_event("run_started")
+        session.add(AuditEvent(tenant_id=tenant_id, actor_id=staff_id, actor_role=staff_role,
+            action="catalog_sync_started", resource_type="ingestion_job", resource_id=job.job_id,
+            details={"run_id": run.run_id}))
+        await session.flush()
+        report_progress()
+        total_api_latency_ms = 0.0
+        total_embedding_time_ms = 0.0
+
+        current_task = asyncio.current_task()
+        if current_task and job:
+            self._active_tasks[job.job_id] = current_task
+
+        def check_cancellation():
+            if job and self.is_job_cancelled(job.job_id):
+                raise JobCancelledException(f"Job '{job.job_id}' was cancelled by staff.")
+
+        try:
+            check_cancellation()
+            tenant = await session.get(Tenant, tenant_id)
+            previous_items = 0
+            if tenant and tenant.active_product_version:
+                previous = await session.get(KnowledgeVersion, tenant.active_product_version)
+                previous_items = int((previous.manifest or {}).get("total_items", 0)) if previous else 0
+
+            catalog_connector = None
+            if products_override is None:
+                from ingestion.shop_catalog import get_catalog_connector
+                catalog_connector = get_catalog_connector()
+                products = await catalog_connector.fetch_products()
+            else:
+                products = products_override
+            check_cancellation()
+            if catalog_connector:
+                total_api_latency_ms = float(catalog_connector.total_request_latency_ms or 0.0)
+                log_event("source_fetch_completed", source_products=len(products),
+                          api_requests=catalog_connector.request_count,
+                          api_latency_ms=round(total_api_latency_ms, 2))
+            if not products and products_override is None:
+                raise ValueError("The shop catalog returned no active products; the draft was not created.")
+
+            normalized: list[CatalogProduct] = []
+            failures: list[dict[str, str]] = []
+            seen: set[str] = set()
+            for raw in products:
+                source_pid = str(raw.get("product_id", raw.get("id", ""))).strip() if isinstance(raw, dict) else ""
+                try:
+                    product = CatalogProduct.model_validate_source(raw)
+                    if product.product_id in seen:
+                        raise ValueError("Duplicate product ID in source export.")
+                    product.normalized_specs()
+                    seen.add(product.product_id)
+                    normalized.append(product)
+                except Exception as exc:
+                    failures.append({"product_id": source_pid or "unknown", "error": _safe_error(exc)[:300]})
+            retry_ids = set(retry_product_ids or [])
+            if retry_ids:
+                failures = [failure for failure in failures if failure["product_id"] in retry_ids]
+                products = [product for product in normalized if product.product_id in retry_ids]
+                found_ids = {product.product_id for product in products}
+                failures.extend({"product_id": pid, "error": "Product is no longer present or valid in the source catalog."}
+                                for pid in sorted(retry_ids - found_ids - {f["product_id"] for f in failures}))
+            else:
+                products = normalized
+            new_items = len(products)
+            if any(item["product_id"] == "unknown" for item in failures):
+                raise ValueError("An invalid catalog record has no stable product ID; safe deletion cannot be determined.")
+            if not products and products_override is None:
+                raise ValueError("The catalog export had no valid products; the active index was preserved.")
+            job.progress_pct = 20
+            job.stats = {"products_seen": len(products), "products_processed": 0, "chunks_indexed": 0,
+                         "added": 0, "updated": 0, "unchanged": 0, "deleted": 0,
+                         "failed": len(failures), "failures": failures}
+            await session.flush()
+            report_progress()
+
+            if previous_items > 0 and not retry_ids:
+                drop_ratio = (previous_items - new_items) / previous_items
+                if drop_ratio > 0.20:
+                    job.status = "failed"
+                    job.error_message = (f"Catalog drop guard triggered: item count dropped by {drop_ratio * 100:.1f}% "
+                                         f"(from {previous_items} to {new_items}, limit 20.0%). Sync aborted to protect index.")
+                    job.progress_pct = 100
+                    job.stats = {"previous_items": previous_items, "new_items": new_items, "drop_ratio": drop_ratio,
+                                 "added": 0, "updated": 0, "unchanged": 0, "deleted": 0,
+                                 "failed": len(failures), "failures": failures}
+                    run.status = "failed"
+                    run.finished_at = datetime.now(timezone.utc)
+                    run.stats = dict(job.stats)
+                    run.errors = failures
+                    log_event("deletion_guard_failed", previous_items=previous_items, current_items=new_items,
+                              drop_ratio=round(drop_ratio, 4))
+                    session.add(AuditEvent(tenant_id=tenant_id, actor_id=staff_id, actor_role=staff_role,
+                        action="catalog_sync_result", resource_type="ingestion_job", resource_id=job.job_id,
+                        details={"status": "failed", "reason": "deletion_guard"}))
+                    await session.flush()
+                    report_progress()
+                    return job
+
+            embedder = _catalog_embedder()
+            embedding_model = getattr(embedder, "model", "deterministic-local-1024")
+            tenant = await session.get(Tenant, tenant_id)
+            previous = await session.get(KnowledgeVersion, tenant.active_product_version) if tenant and tenant.active_product_version else None
+            previous_manifest = dict(previous.manifest or {}) if previous else {}
+            previous_hashes = previous_manifest.get("product_hashes", {})
+            old_product_chunks: dict[str, list[KnowledgeChunk]] = {}
+            if previous:
+                old_rows = (await session.execute(
+                    select(KnowledgeChunk).join(KnowledgeVersionChunk, KnowledgeVersionChunk.chunk_id == KnowledgeChunk.chunk_id)
+                    .where(KnowledgeChunk.tenant_id == tenant_id, KnowledgeChunk.source_type == "catalog",
+                           KnowledgeVersionChunk.version_id == previous.version_id)
+                )).scalars().all()
+                for row in old_rows:
+                    old_product_chunks.setdefault(row.product_id or "", []).append(row)
+
+            records: list[dict[str, Any]] = []
+            product_hashes: dict[str, str] = dict(previous_hashes) if retry_ids else {}
+            product_manifest: dict[str, dict[str, Any]] = dict(previous_manifest.get("products", {})) if retry_ids else {}
+            product_chunks: dict[str, list[dict[str, Any]]] = {}
+            stats = {"added": 0, "updated": 0, "unchanged": 0, "deleted": 0}
+            if retry_ids:
+                for pid, chunks in old_product_chunks.items():
+                    if pid in retry_ids:
+                        continue
+                    product_chunks[pid] = [{"chunk_id": chunk.chunk_id, "text": chunk.text,
+                        "metadata": dict(chunk.metadata_ or {}), "embedding": chunk.embedding,
+                        "product": None, "content_hash": (chunk.metadata_ or {}).get("content_hash")}
+                        for chunk in chunks]
+            for product in products:
+                pid = product.product_id
+                product_hash = product.content_hash()
+                product_hashes[pid] = product_hash
+                old_hash = previous_hashes.get(pid)
+                stats["unchanged" if old_hash == product_hash else ("updated" if old_hash else "added")] += 1
+                product_manifest[pid] = {
+                    "name": product.name, "brand": product.brand, "category": product.category,
+                    "content_hash": product_hash,
+                    "specifications": [spec.model_dump() for spec in product.normalized_specs()],
                 }
-                for p in db_prods
-            ]
+                try:
+                    target_min_chunks = 1 if len(product.description.split()) < 5 and not product.faqs else 5
+                    product_records = build_product_chunks(product, doc_version=product_hash, min_chunks=target_min_chunks)
+                    for record in product_records:
+                        record["product"] = product
+                        record["chunk_id"] = hashlib.sha256(
+                            f"{tenant_id}|{embedding_model}|{record['content_hash']}".encode("utf-8")
+                        ).hexdigest()
+                        existing = await self.vector_store.get_chunk(tenant_id, record["chunk_id"], session)
+                        record["embedding"] = existing.embedding if existing and existing.embedding is not None else None
+                        records.append(record)
+                        product_chunks.setdefault(pid, []).append(record)
+                except Exception as exc:
+                    failures.append({"product_id": pid, "error": _safe_error(exc)[:300]})
+                    product_chunks.pop(pid, None)
+                    log_event("product_chunk_failed", product_id=pid, error=_safe_error(exc)[:300])
 
-        new_items = len(products)
-        job.progress_pct = 40
-        await session.flush()
-
-        # 4. Deletion Guard: abort if count drops by > 20%
-        if prev_items > 0:
-            drop_ratio = (prev_items - new_items) / prev_items
-            if drop_ratio > 0.20:
-                job.status = "failed"
-                job.error_message = (
-                    f"Catalog drop guard triggered: item count dropped by {drop_ratio * 100:.1f}% "
-                    f"(from {prev_items} to {new_items}, limit 20.0%). Sync aborted to protect index."
-                )
-                job.progress_pct = 100
-                job.stats = {"previous_items": prev_items, "new_items": new_items, "drop_ratio": drop_ratio}
+            # Reuse completed vectors by chunk hash; embed only missing or changed chunks.
+            missing_by_product: dict[str, list[dict[str, Any]]] = {}
+            for record in records:
+                if record["embedding"] is None:
+                    missing_by_product.setdefault(record["product"].product_id, []).append(record)
+            processed_products = 0
+            for pid, missing in list(missing_by_product.items()):
+                check_cancellation()
+                embed_started = time.monotonic()
+                try:
+                    vectors = await embedder.embed_documents([row["text"] for row in missing])
+                    if len(vectors) != len(missing) or any(len(vector) != 1024 for vector in vectors):
+                        raise ValueError("Embedding service returned an invalid result or non-1024 vector.")
+                    for record, vector in zip(missing, vectors):
+                        record["embedding"] = vector
+                    embed_elapsed_ms = round((time.monotonic() - embed_started) * 1000, 2)
+                    total_embedding_time_ms += embed_elapsed_ms
+                    log_event("product_embedded", product_id=pid, chunk_count=len(missing),
+                              embedding_time_ms=embed_elapsed_ms)
+                except Exception as exc:
+                    failures.append({"product_id": pid, "error": _safe_error(exc)[:300]})
+                    product_chunks.pop(pid, None)
+                    log_event("product_embedding_failed", product_id=pid, error=_safe_error(exc)[:300])
+                processed_products += 1
+                job.progress_pct = min(85, 30 + int(50 * processed_products / max(len(missing_by_product), 1)))
+                job.stats = {**(job.stats or {}), "products_processed": processed_products,
+                             "chunks_indexed": sum(len(items) for items in product_chunks.values()),
+                             "failed": len(failures), "failures": failures}
                 await session.flush()
-                return job
+                report_progress()
 
-        # 5. Content-addressed chunking & deduplication
-        version_id = f"ver_cat_{uuid.uuid4().hex[:12]}"
-        chunks_indexed = 0
+            failed_ids = {item["product_id"] for item in failures}
+            for pid in failed_ids:
+                product_chunks.pop(pid, None)
+                if pid in previous_manifest.get("products", {}):
+                    product_manifest[pid] = previous_manifest["products"][pid]
+                    product_hashes[pid] = previous_hashes.get(pid, "")
+                else:
+                    product_manifest.pop(pid, None)
+                    product_hashes.pop(pid, None)
+                # Keep the previous version's product content in the draft until a
+                # successful retry, so one bad source item cannot erase good data.
+                for old_chunk in old_product_chunks.get(pid, []):
+                    product_chunks.setdefault(pid, []).append({"chunk_id": old_chunk.chunk_id, "text": old_chunk.text,
+                        "metadata": dict(old_chunk.metadata_ or {}), "embedding": old_chunk.embedding,
+                        "product": None, "content_hash": (old_chunk.metadata_ or {}).get("content_hash")})
 
-        for prod in products:
-            pid = prod["product_id"]
-            pname = prod["name"]
-            pbrand = prod.get("brand", "Generic")
-            pcat = prod.get("category", "General")
-            pdesc = prod.get("description", pname)
+            source_ids = {p.product_id for p in products}
+            failed_ids |= {str(f.get("product_id")) for f in failures if f.get("product_id") != "unknown"}
+            deleted_ids = set() if retry_ids else set(old_product_chunks) - source_ids - failed_ids
+            stats["deleted"] = len(deleted_ids)
+            version_id = f"ver_cat_{uuid.uuid4().hex[:12]}"
+            version = KnowledgeVersion(
+                version_id=version_id, tenant_id=tenant_id, type="catalog", status="draft",
+                manifest={"total_items": len(product_chunks), "chunk_count": sum(map(len, product_chunks.values())), "job_id": job.job_id,
+                          "eval_result": None, "created_by": staff_id,
+                          "last_sync_at": datetime.now(timezone.utc).isoformat(),
+                          "embedding_model": embedding_model, "embedding_dimension": 1024,
+                          "distance_metric": "cosine", "product_hashes": product_hashes,
+                          "products": product_manifest},
+                created_by=staff_id,
+            )
+            session.add(version)
+            await session.flush()
 
-            chunk_text = f"{pname} - Overview: {pdesc}"
-            cid = generate_chunk_id(tenant_id, "catalog", pid, chunk_text)
+            check_cancellation()
+            for pid, items in product_chunks.items():
+                for record in items:
+                    prod = record.get("product")
+                    cid = record["chunk_id"]
+                    metadata = {**record.get("metadata", {}), "content_hash": record.get("content_hash"),
+                                "embedding_model": embedding_model}
+                    await self.vector_store.upsert_chunk(tenant_id, cid, pid, record["text"],
+                        record["embedding"], metadata, session)
+                    await self.vector_store.link_version(version_id, cid, session)
 
-            existing = await session.get(KnowledgeChunk, cid)
-            if not existing:
-                chk = KnowledgeChunk(
-                    chunk_id=cid,
-                    tenant_id=tenant_id,
-                    source_type="catalog",
-                    product_id=pid,
-                    text=chunk_text,
-                    metadata_={
-                        "product_id": pid,
-                        "product_name": pname,
-                        "brand": pbrand,
-                        "category": pcat,
-                    }
-                )
-                session.add(chk)
+            # Stage specifications under this draft version. Active relational
+            # product identity/spec rows are changed only by promotion.
+            check_cancellation()
+            for product in products:
+                if product.product_id in failed_ids:
+                    continue
+                pid = product.product_id
+                row = (await session.execute(select(ProductModel).where(
+                    ProductModel.product_id == pid,
+                    ProductModel.tenant_id == tenant_id,
+                ))).scalars().first()
+                if row and row.tenant_id != tenant_id:
+                    raise ValueError(f"Product ID {pid} is already owned by another tenant.")
+                if not row:
+                    row = ProductModel(
+                        product_id=pid,
+                        tenant_id=tenant_id,
+                        name=product.name,
+                        brand=product.brand,
+                        category=product.category,
+                        aliases=getattr(product, "aliases", []) or [],
+                        active=True,
+                    )
+                    session.add(row)
+                    await session.flush()
+                for spec in product.normalized_specs():
+                    session.add(ProductSpecModel(product_id=pid, spec_key=spec.label, spec_value=spec.value,
+                                                 unit=spec.unit, version_id=version_id))
+                if product.price is not None:
+                    price_row = await session.get(ProductPriceModel, pid)
+                    if price_row is None:
+                        price_row = ProductPriceModel(product_id=pid)
+                        session.add(price_row)
+                    price_row.price = product.price
+                    price_row.discount_price = product.discount_price
+                    price_row.currency = product.currency
+                    price_row.in_stock = product.in_stock if product.in_stock is not None else True
+            for pid in failed_ids:
+                if product_manifest.get(pid):
+                    old_specs = (await session.execute(select(ProductSpecModel).where(
+                        ProductSpecModel.product_id == pid,
+                        ProductSpecModel.version_id == (previous.version_id if previous else None),
+                    ))).scalars().all()
+                    for spec in old_specs:
+                        session.add(ProductSpecModel(product_id=pid, spec_key=spec.spec_key,
+                            spec_value=spec.spec_value, unit=spec.unit, version_id=version_id))
+            await session.flush()
 
-            ver_chk = KnowledgeVersionChunk(version_id=version_id, chunk_id=cid)
-            session.add(ver_chk)
-            chunks_indexed += 1
-
-        manifest = {
-            "total_items": new_items,
-            "chunk_count": chunks_indexed,
-            "job_id": job_id,
-            "eval_result": None,
-            "created_by": staff_id,
-        }
-
-        cat_version = KnowledgeVersion(
-            version_id=version_id,
-            tenant_id=tenant_id,
-            type="catalog",
-            status="draft",
-            manifest=manifest,
-            created_by=staff_id,
-        )
-        session.add(cat_version)
-
-        job.status = "completed"
-        job.progress_pct = 100
-        job.stats = {
-            "version_id": version_id,
-            "total_items": new_items,
-            "chunks_indexed": chunks_indexed
-        }
-        await session.flush()
-        return job
+            job.status = "completed"
+            job.progress_pct = 100
+            job.error_message = f"{len(failures)} catalog item(s) failed; successful items were staged." if failures else None
+            job.stats = {"version_id": version_id, "total_items": len(product_chunks), "products_seen": len(products),
+                         "products_processed": len(products) - len(failed_ids),
+                         "chunks_indexed": sum(map(len, product_chunks.values())), **stats,
+                         "failed": len(failures), "failures": failures,
+                         "duration_seconds": round(time.monotonic() - started, 3),
+                         "last_sync_at": version.manifest["last_sync_at"]}
+            await session.flush()
+            run = await session.scalar(select(IngestionRun).where(IngestionRun.job_id == job.job_id))
+            if run:
+                run.status = "succeeded"
+                run.finished_at = datetime.now(timezone.utc)
+                run.stats = dict(job.stats)
+                run.errors = failures
+                log_event("run_finished",
+                    status=run.status,
+                    duration_seconds=round(time.monotonic() - started, 3),
+                    api_latency_ms=round(total_api_latency_ms, 2),
+                    embedding_time_ms=round(total_embedding_time_ms, 2),
+                    chunks_indexed=job.stats.get("chunks_indexed", 0),
+                    counts=job.stats)
+                run.promoted_version_id = None
+                for failure in failures:
+                    if failure.get("product_id") != "unknown":
+                        session.add(IngestionItem(
+                            run_id=run.run_id, tenant_id=tenant_id,
+                            product_id=str(failure.get("product_id")), status="dead_letter",
+                            attempts=1, error_code="catalog_item_failed",
+                            error_message=failure.get("error", "Import failed")[:500],
+                        ))
+            session.add(AuditEvent(tenant_id=tenant_id, actor_id=staff_id, actor_role=staff_role,
+                action="catalog_sync_result", resource_type="ingestion_job", resource_id=job.job_id,
+                details={"status": job.status, "stats": job.stats}))
+            report_progress()
+            return job
+        except (JobCancelledException, asyncio.CancelledError) as exc:
+            job.status = "cancelled"
+            job.progress_pct = 100
+            job.error_message = "Ingestion pipeline cancelled by staff."
+            job.stats = {**(job.stats or {}), "cancelled": True}
+            run.status = "cancelled"
+            run.finished_at = datetime.now(timezone.utc)
+            run.errors = [{"error": "Cancelled by staff."}]
+            log_event("run_cancelled", reason=str(exc), duration_seconds=round(time.monotonic() - started, 3))
+            session.add(AuditEvent(tenant_id=tenant_id, actor_id=staff_id, actor_role=staff_role,
+                action="catalog_sync_cancelled", resource_type="ingestion_job", resource_id=job.job_id,
+                details={"status": "cancelled", "reason": "Staff cancellation"}))
+            await session.flush()
+            report_progress()
+            return job
+        except Exception as exc:
+            job.status = "failed"
+            job.progress_pct = 100
+            job.error_message = _safe_error(exc)
+            job.stats = {**(job.stats or {}), "failure_count": 1, "failures": [_safe_error(exc)]}
+            run.status = "failed"
+            run.finished_at = datetime.now(timezone.utc)
+            run.errors = [{"error": _safe_error(exc)}]
+            log_event("run_failed", error=_safe_error(exc), duration_seconds=round(time.monotonic() - started, 3))
+            session.add(AuditEvent(tenant_id=tenant_id, actor_id=staff_id, actor_role=staff_role,
+                action="catalog_sync_result", resource_type="ingestion_job", resource_id=job.job_id,
+                details={"status": "failed", "error": "Catalog sync failed"}))
+            await session.flush()
+            report_progress()
+            return job
+        finally:
+            if job:
+                self._active_tasks.pop(job.job_id, None)
+                self._cancelled_jobs.discard(job.job_id)
 
     async def run_version_eval(
         self,
@@ -493,14 +872,52 @@ class KnowledgeManifestEngine:
             if has_items:
                 passed_det += 1
 
-            total_fuzzy += 1
+            # 2. Staging Retrieval Smoke Test: Verify chunks exist and are linked to this version
+            total_det += 1
+            staged_chunks = (await session.execute(
+                select(KnowledgeChunk)
+                .join(KnowledgeVersionChunk, KnowledgeVersionChunk.chunk_id == KnowledgeChunk.chunk_id)
+                .where(
+                    KnowledgeChunk.tenant_id == tenant_id,
+                    KnowledgeVersionChunk.version_id == version_id,
+                )
+            )).scalars().all()
+            has_chunks = len(staged_chunks) > 0
+            all_prefixed = all(" - " in (c.text or "") for c in staged_chunks) if has_chunks else False
+            smoke_ok = has_chunks and all_prefixed
             scenario_results.append({
-                "name": "fuzzy_catalog_search_disambiguation",
-                "category": "fuzzy",
-                "passed": True,
-                "detail": "Product name and brand metadata correctly indexed"
+                "name": "deterministic_retrieval_smoke_test",
+                "category": "deterministic",
+                "passed": smoke_ok,
+                "detail": f"Staged chunks verified ({len(staged_chunks)} chunks, product prefix verified: {all_prefixed})"
             })
-            passed_fuzzy += 1
+            if smoke_ok:
+                passed_det += 1
+
+            # 3. Product Isolation Smoke Test: Check zero cross-product chunk ID overlap
+            total_fuzzy += 1
+            product_manifest = manifest.get("products", {})
+            isolation_ok = True
+            leakage_detail = "Verified cross-product chunk isolation"
+            if len(product_manifest) >= 2:
+                sample_pids = list(product_manifest.keys())[:2]
+                pid_a, pid_b = sample_pids[0], sample_pids[1]
+                chunks_a = [c for c in staged_chunks if c.product_id == pid_a]
+                chunks_b = [c for c in staged_chunks if c.product_id == pid_b]
+                if set(c.chunk_id for c in chunks_a) & set(c.chunk_id for c in chunks_b):
+                    isolation_ok = False
+                    leakage_detail = f"Leakage detected between product {pid_a} and {pid_b}"
+                else:
+                    leakage_detail = f"Strict product chunk isolation verified between {pid_a} and {pid_b}"
+
+            scenario_results.append({
+                "name": "fuzzy_product_isolation_and_disambiguation",
+                "category": "fuzzy",
+                "passed": isolation_ok,
+                "detail": leakage_detail,
+            })
+            if isolation_ok:
+                passed_fuzzy += 1
 
         det_score = passed_det / total_det if total_det > 0 else 0.0
         fuzzy_score = passed_fuzzy / total_fuzzy if total_fuzzy > 0 else 0.0
@@ -603,6 +1020,26 @@ class KnowledgeManifestEngine:
             elif version.type == "catalog":
                 tenant.active_product_version = version_id
 
+        if version.type == "catalog":
+            product_manifest = manifest.get("products", {})
+            await session.execute(update(ProductModel).where(
+                ProductModel.tenant_id == tenant_id
+            ).values(active=False))
+            for product_id, product_data in product_manifest.items():
+                product = await session.get(ProductModel, product_id)
+                if product and product.tenant_id != tenant_id:
+                    raise ValueError("Catalog promotion found a product owned by another tenant.")
+                if product is None:
+                    product = ProductModel(product_id=product_id, tenant_id=tenant_id,
+                        name=product_data["name"], brand=product_data.get("brand", "Generic"),
+                        category=product_data.get("category", "General"), aliases=[], active=True)
+                    session.add(product)
+                else:
+                    product.name = product_data["name"]
+                    product.brand = product_data.get("brand", "Generic")
+                    product.category = product_data.get("category", "General")
+                    product.active = True
+
         # 4. If policy version, update TenantPolicyConfig
         if version.type == "policy":
             confirmed = manifest.get("confirmed_policy", {})
@@ -636,8 +1073,29 @@ class KnowledgeManifestEngine:
         )
         session.add(promo_event)
 
-        # 6. Invalidate tenant cache
+        # 6. Invalidate tenant cache and affected product caches
+        if version.type == "catalog":
+            product_manifest = manifest.get("products", {})
+            for pid in product_manifest.keys():
+                self.cache_service.invalidate_product(pid)
         self.cache_service.invalidate_tenant(tenant_id)
+
+        # 7. Update IngestionRun with promoted_version_id if job_id is present
+        job_id = manifest.get("job_id")
+        if job_id:
+            run = await session.scalar(select(IngestionRun).where(IngestionRun.job_id == job_id))
+            if run:
+                run.promoted_version_id = version.version_id
+                safe_event = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "run_id": run.run_id,
+                    "job_id": job_id,
+                    "event": "version_promoted",
+                    "promoted_version_id": version.version_id,
+                }
+                run.logs = [*(run.logs or []), safe_event]
+                logger.info(json.dumps(safe_event, ensure_ascii=False, separators=(",", ":")))
+
         await session.flush()
         return version
 
@@ -689,6 +1147,22 @@ class KnowledgeManifestEngine:
                 tenant.active_policy_version = target.version_id
             elif version_type == "catalog":
                 tenant.active_product_version = target.version_id
+                product_manifest = (target.manifest or {}).get("products", {})
+                await session.execute(update(ProductModel).where(ProductModel.tenant_id == tenant_id).values(active=False))
+                for product_id, product_data in product_manifest.items():
+                    product = await session.get(ProductModel, product_id)
+                    if product is None:
+                        product = ProductModel(product_id=product_id, tenant_id=tenant_id,
+                            name=product_data["name"], brand=product_data.get("brand", "Generic"),
+                            category=product_data.get("category", "General"), aliases=[], active=True)
+                        session.add(product)
+                    elif product.tenant_id != tenant_id:
+                        raise ValueError("Catalog rollback found a product owned by another tenant.")
+                    else:
+                        product.name = product_data["name"]
+                        product.brand = product_data.get("brand", "Generic")
+                        product.category = product_data.get("category", "General")
+                        product.active = True
 
         # Record audit event
         rollback_event = AuditEvent(
@@ -701,8 +1175,21 @@ class KnowledgeManifestEngine:
             details={"version_type": version_type}
         )
         session.add(rollback_event)
+        logger.info(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": "version_rolled_back",
+            "tenant_id": tenant_id,
+            "version_type": version_type,
+            "restored_version_id": target.version_id,
+            "actor_id": staff_id,
+            "actor_role": staff_role,
+        }, ensure_ascii=False, separators=(",", ":")))
 
-        # Invalidate cache
+        # Invalidate cache for affected products and tenant
+        if version_type == "catalog":
+            product_manifest = (target.manifest or {}).get("products", {})
+            for pid in product_manifest.keys():
+                self.cache_service.invalidate_product(pid)
         self.cache_service.invalidate_tenant(tenant_id)
         await session.flush()
         return target

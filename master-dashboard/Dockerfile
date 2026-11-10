@@ -1,23 +1,13 @@
-# Stage 1: Build the React Application
-FROM node:20-alpine AS builder
-
+FROM node:20-alpine AS build
 WORKDIR /app
-
-COPY package*.json ./
+COPY package.json package-lock.json ./
 RUN npm ci
-
 COPY . .
 RUN npm run build
 
-# Stage 2: Serve via Production Nginx
-FROM nginx:alpine
-
-COPY --from=builder /app/dist /usr/share/nginx/html
+FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-
+COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
-
-HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-    CMD wget -q --spider http://127.0.0.1/ || exit 1
-
-CMD ["nginx", "-g", "daemon off;"]
+HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1

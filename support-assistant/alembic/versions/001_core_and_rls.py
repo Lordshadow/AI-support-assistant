@@ -10,7 +10,7 @@ spec 14.1 trace columns, R4 spend ledger, and content-addressed knowledge chunks
 """
 from typing import Sequence, Union
 
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 try:
@@ -44,17 +44,116 @@ TENANT_TABLES = [
 ]
 
 
+def _is_legacy_table(table_name: str, current_columns: set[str]) -> bool:
+    """Detect tables created by the original init.sql before the ORM schema."""
+    if context.is_offline_mode():
+        return False
+    inspector = sa.inspect(op.get_bind())
+    if not inspector.has_table(table_name):
+        return False
+    return not current_columns.issubset(
+        {column["name"] for column in inspector.get_columns(table_name)}
+    )
+
+
+def _preserve_legacy_schema() -> tuple[bool, bool]:
+    """Move incompatible legacy tables aside before creating their current forms."""
+    if context.is_offline_mode():
+        return False, False
+
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    legacy_refunds = _is_legacy_table(
+        "refund_requests", {"tenant_id", "request_time", "leased_until", "retry_count"}
+    )
+    legacy_chunks = _is_legacy_table(
+        "knowledge_chunks", {"tenant_id", "chunk_id", "source_type", "metadata"}
+    )
+
+    if legacy_refunds:
+        old_indexes = {idx["name"] for idx in inspector.get_indexes("refund_requests")}
+        op.rename_table("refund_requests", "legacy_refund_requests")
+        if "idx_refund_customer" in old_indexes:
+            op.execute("ALTER INDEX idx_refund_customer RENAME TO idx_legacy_refund_customer")
+    if legacy_chunks:
+        op.rename_table("knowledge_chunks", "legacy_knowledge_chunks")
+    return legacy_refunds, legacy_chunks
+
+
+def _upgrade_legacy_commerce_tables() -> None:
+    """Align the init.sql commerce tables with the current SQLAlchemy models."""
+    if context.is_offline_mode():
+        return
+
+    inspector = sa.inspect(op.get_bind())
+    if inspector.has_table("products"):
+        op.execute("ALTER TABLE products ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'tenant_novaretail'")
+        aliases = next((c for c in inspector.get_columns("products") if c["name"] == "aliases"), None)
+        if aliases and "ARRAY" in str(aliases["type"]).upper():
+            op.execute("ALTER TABLE products ALTER COLUMN aliases DROP DEFAULT")
+            op.execute("ALTER TABLE products ALTER COLUMN aliases TYPE JSONB USING to_jsonb(aliases)")
+            op.execute("ALTER TABLE products ALTER COLUMN aliases SET DEFAULT '[]'::jsonb")
+    if inspector.has_table("orders"):
+        op.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'tenant_novaretail'")
+    if inspector.has_table("product_specs"):
+        spec_id = next((c for c in inspector.get_columns("product_specs") if c["name"] == "spec_id"), None)
+        if spec_id and "UUID" in str(spec_id["type"]).upper():
+            op.execute("ALTER TABLE product_specs ALTER COLUMN spec_id DROP DEFAULT")
+            op.execute("ALTER TABLE product_specs ALTER COLUMN spec_id TYPE VARCHAR(64) USING spec_id::text")
+
+
+def _copy_legacy_data(legacy_refunds: bool, legacy_chunks: bool) -> None:
+    """Copy compatible legacy data while retaining the source tables for audit/rollback."""
+    if context.is_offline_mode():
+        return
+    op.execute(
+        "INSERT INTO tenants (tenant_id, name) VALUES ('tenant_novaretail', 'NovaRetail') "
+        "ON CONFLICT (tenant_id) DO NOTHING"
+    )
+    _upgrade_legacy_commerce_tables()
+
+    if legacy_refunds:
+        op.execute("""
+            INSERT INTO refund_requests (
+                refund_id, tenant_id, order_id, customer_id, item_ref, amount_inr,
+                state, idempotency_key, reason, request_time, staff_note, decided_at,
+                decided_by
+            )
+            SELECT refund_id, 'tenant_novaretail', order_id, customer_id, 'ALL', amount_inr,
+                CASE WHEN state IN ('pending_approval', 'approved', 'processed', 'rejected', 'failed')
+                     THEN state ELSE 'pending_approval' END,
+                idempotency_key, reason, created_at, note, decided_at,
+                CASE WHEN EXISTS (SELECT 1 FROM staff_users s WHERE s.staff_id = legacy_refund_requests.decided_by)
+                     THEN decided_by ELSE NULL END
+            FROM legacy_refund_requests
+            ON CONFLICT DO NOTHING
+        """)
+    if legacy_chunks:
+        op.execute("""
+            INSERT INTO knowledge_chunks (
+                chunk_id, tenant_id, source_type, product_id, text, embedding, metadata, created_at
+            )
+            SELECT chunk_id, 'tenant_novaretail', source_type, product_id, text, embedding,
+                COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                    'legacy_doc_id', doc_id,
+                    'legacy_doc_version', doc_version,
+                    'effective_date', effective_date
+                ), created_at
+            FROM legacy_knowledge_chunks
+            ON CONFLICT (chunk_id) DO NOTHING
+        """)
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     is_postgres = bind.dialect.name == "postgresql"
+    legacy_refunds, legacy_chunks = _preserve_legacy_schema()
 
     # 1. Extensions for PostgreSQL
     if is_postgres:
         op.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
         op.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
-        op.execute("DROP TABLE IF EXISTS refund_requests CASCADE;")
-        op.execute("DROP TABLE IF EXISTS knowledge_chunks CASCADE;")
 
     # 2. Tenants Table
     op.create_table(
@@ -70,7 +169,7 @@ def upgrade() -> None:
         sa.Column("active_policy_version", sa.String(64), nullable=True),
         sa.Column("active_product_version", sa.String(64), nullable=True),
         sa.Column("refund_turnaround_hours", sa.Integer(), server_default="24", nullable=False),
-        sa.Column("widget_origins", postgresql.ARRAY(sa.Text()) if is_postgres else sa.JSON(), server_default="{}" if is_postgres else "[]", nullable=False),
+        sa.Column("widget_origins", postgresql.JSONB() if is_postgres else sa.JSON(), server_default="[]" if is_postgres else "[]", nullable=False),
         sa.Column("jwks_url", sa.String(255), nullable=True),
         sa.Column("issuer", sa.String(255), nullable=True),
         sa.Column("audience", sa.String(255), nullable=True),
@@ -89,6 +188,7 @@ def upgrade() -> None:
         sa.Column("locked_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     )
+
     op.create_index("idx_staff_users_email", "staff_users", ["email"])
 
     # 4. Staff Tenant Memberships Table (Multi-tenant RBAC)
@@ -109,6 +209,7 @@ def upgrade() -> None:
         sa.Column("session_id", sa.String(128), primary_key=True),
         sa.Column("staff_id", sa.String(64), sa.ForeignKey("staff_users.staff_id", ondelete="CASCADE"), nullable=False),
         sa.Column("tenant_id", sa.String(64), sa.ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False),
+        sa.Column("active_tenant_id", sa.String(64), sa.ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
@@ -116,6 +217,7 @@ def upgrade() -> None:
     )
     op.create_index("idx_staff_sessions_staff", "staff_sessions", ["staff_id"])
     op.create_index("idx_staff_sessions_tenant", "staff_sessions", ["tenant_id"])
+    op.create_index("idx_staff_sessions_active_tenant", "staff_sessions", ["active_tenant_id"])
 
     # 6. Tenant Policy Configs (Append-only versioned money rules - Spec 16.4)
     op.create_table(
@@ -316,15 +418,24 @@ def upgrade() -> None:
             """
         )
 
+    # Import legacy rows before RLS policies are enabled. The original tables
+    # remain intact so the upgrade never destroys source data.
+    _copy_legacy_data(legacy_refunds, legacy_chunks)
+
     # 18. Apply PostgreSQL Row-Level Security (RLS) across all tenant tables
     if is_postgres:
         for table in TENANT_TABLES:
             op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
             op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;")
+            predicate = "tenant_id = current_setting('app.tenant_id', true)"
+            if table == "staff_tenant_memberships":
+                predicate += " OR staff_id = current_setting('app.staff_id', true)"
+            elif table == "staff_sessions":
+                predicate += " OR session_id = current_setting('app.session_id', true)"
             op.execute(
                 f"""
                 CREATE POLICY tenant_isolation_policy ON {table}
-                USING (tenant_id = current_setting('app.tenant_id', true));
+                USING ({predicate});
                 """
             )
 

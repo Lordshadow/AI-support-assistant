@@ -67,6 +67,11 @@ class SessionContext:
     channel: Literal["web", "whatsapp"] = "web"
     verified_until: Optional[datetime] = None
     page_context: Optional[PageContext] = None
+    # Kept only in memory and inside the short-lived signed MCP transport token.
+    # Never render or log this value; storefront APIs validate its signature.
+    storefront_customer_token: Optional[str] = field(default=None, repr=False, compare=False)
+    # Order-scoped token issued by the storefront after its OTP verification.
+    storefront_refund_verification_token: Optional[str] = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)

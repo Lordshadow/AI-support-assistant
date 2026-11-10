@@ -4,7 +4,7 @@ Implements CatalogPort protocol using structured in-memory catalog data.
 Complies with Specification Section 6, 7.1, and 8 (Look-Alike Disambiguation).
 """
 
-from typing import Optional
+from typing import Optional, Any
 import re
 from core.models import ProductMatch, ProductSpecs, PriceInfo, ProductSummary
 
@@ -157,7 +157,12 @@ class MockCatalogAdapter:
             elif ("141" in query and "141" in name_lower) or ("131" in query and "131" in name_lower):
                 score = 0.92
             # Look-alike broad query (e.g. "pulse buds")
-            elif "pulse" in query and "buds" in query and "pulse buds" in name_lower:
+            elif (
+                "pulse" in query
+                and "buds" in query
+                and not re.search(r"\b(?:141|131)\b", query)
+                and "pulse buds" in name_lower
+            ):
                 score = 0.85
             elif any(alias in query for alias in specs.aliases):
                 score = 0.80
@@ -213,19 +218,91 @@ class MockCatalogAdapter:
     async def search_product_docs(self, product_id: str, query: str) -> list[str]:
         """Returns chunks strictly bound to product_id."""
         docs = self._docs.get(product_id, [])
-        query_words = set(re.findall(r"\w+", query.lower()))
+        query_words = self._content_terms(query)
         matched = []
         for d in docs:
-            d_words = set(re.findall(r"\w+", d.lower()))
+            d_words = self._content_terms(d)
             if query_words & d_words:
                 matched.append(d)
-        return matched or docs[:2]
+        return matched
 
     async def search_policy(self, query: str) -> list[str]:
-        query_words = set(re.findall(r"\w+", query.lower()))
-        matched = []
+        query_words = self._content_terms(query)
+        scored = []
         for p in self._policies:
-            p_words = set(re.findall(r"\w+", p.lower()))
-            if query_words & p_words:
-                matched.append(p)
-        return matched or self._policies[:3]
+            p_words = self._content_terms(p)
+            score = len(query_words & p_words)
+            if score:
+                scored.append((score, p))
+        if not scored:
+            return []
+        best_score = max(score for score, _ in scored)
+        return [clause for score, clause in scored if score == best_score]
+
+    def export_catalog(self) -> list[dict[str, Any]]:
+        """
+        Export catalog products for knowledge ingestion.
+        Excludes price, stock, offers, or order status (always fetched live).
+        Specifications are structured relationally for product_specs.
+        """
+        descriptions = {
+            "P1041": "Pulse Buds 141 deliver high fidelity wireless audio with environmental noise cancellation. Equipped with ASAP charge technology and IPX4 splash resistance for everyday active use.",
+            "P1031": "Pulse Buds 131 feature powerful 13mm dynamic drivers and extra long battery playback. Ergonomic semi-in-ear design provides lasting comfort and punchy bass.",
+            "P2001": "Nova Watch Pro is an enterprise smartwatch with an AMOLED always-on display, multi-sport activity tracking, and comprehensive biometric monitoring.",
+            "P-GIFT500": "Google Play ₹500 digital gift voucher code for apps, games, movies, and in-app subscriptions across Android devices.",
+        }
+        faqs_map = {
+            "P1041": [
+                {"question": "How long does the battery last on Pulse Buds 141?", "answer": "Pulse Buds 141 offers up to 42 hours total playback with the case and 6 hours per charge."},
+                {"question": "Does Pulse Buds 141 support fast charging?", "answer": "Yes, ASAP charge gives 75 minutes of playtime with just 10 minutes of charging."},
+                {"question": "Is Pulse Buds 141 water resistant?", "answer": "Pulse Buds 141 is rated IPX4 for water and sweat resistance."},
+                {"question": "What is the warranty period for Pulse Buds 141?", "answer": "It includes a 1-year brand warranty covering manufacturing defects."},
+            ],
+            "P1031": [
+                {"question": "What is the battery backup of Pulse Buds 131?", "answer": "Pulse Buds 131 provides up to 60 hours total playback and 8 hours on earbuds."},
+                {"question": "What size are the audio drivers in Pulse Buds 131?", "answer": "It is equipped with 13mm dynamic sound drivers for enhanced bass."},
+                {"question": "Does Pulse Buds 131 have Type-C charging?", "answer": "Yes, it charges via a standard USB Type-C charging port."},
+            ],
+            "P2001": [
+                {"question": "How long does Nova Watch Pro battery last?", "answer": "The 300mAh battery delivers up to 7 days of normal use and 14 days standby."},
+                {"question": "Does Nova Watch Pro track sleep and SpO2?", "answer": "Yes, it provides 24/7 continuous heart rate, SpO2 blood oxygen, and sleep stage tracking."},
+                {"question": "Is Nova Watch Pro swim-proof?", "answer": "It features 3 ATM water resistance suitable for splashes and swimming."},
+            ],
+            "P-GIFT500": [
+                {"question": "How do I redeem my Google Play gift card?", "answer": "Open Google Play Store, go to Profile > Payments & subscriptions > Redeem code, and enter your 16-digit code."},
+                {"question": "Can I return a digital gift card?", "answer": "No, per Store Policy Clause 6.0 digital gift cards are strictly non-refundable once delivered."},
+            ],
+        }
+
+        exported = []
+        for pid, spec in self._specs.items():
+            specs_list = [{"label": k, "value": v} for k, v in spec.specs.items()]
+            exported.append({
+                "product_id": pid,
+                "name": spec.name,
+                "brand": spec.brand,
+                "category": spec.category,
+                "description": descriptions.get(pid, f"{spec.name} - Official product specification and user documentation."),
+                "faqs": faqs_map.get(pid, []),
+                "specifications": specs_list,
+            })
+        return exported
+
+    @staticmethod
+    def _content_terms(text: str) -> set[str]:
+        """Strip question filler and product names so retrieval matches the topic."""
+        ignored = {
+            "a", "about", "an", "and", "are", "can", "could", "do", "does", "for",
+            "from", "get", "how", "i", "is", "it", "its", "me", "my", "of", "on",
+            "or", "please", "tell", "that", "the", "their", "this", "to", "what", "when",
+            "where", "which", "who", "why", "with", "would", "you", "your", "pulse", "buds",
+            "nova", "watch", "pro", "google", "play", "gift", "card", "141", "131", "1041",
+            "1031", "2001", "p1041", "p1031", "p2001", "features", "feature", "spec", "specs",
+            "policy", "clause", "store", "novaretail",
+        }
+        roots = {"changes": "change", "changed": "change", "changing": "change", "repairs": "repair"}
+        return {
+            roots.get(word, word)
+            for word in re.findall(r"\w+", text.lower())
+            if word not in ignored and not word.isdigit()
+        }

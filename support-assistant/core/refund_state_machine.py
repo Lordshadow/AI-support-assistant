@@ -106,7 +106,8 @@ class RefundStateMachine:
                 resource_type="refund_request",
                 resource_id=refund_id,
                 details={
-                    "amount_inr": refund.amount_inr,
+                    # Audit details are JSON; preserve paise without float coercion.
+                    "amount_inr": str(refund.amount_inr),
                     "order_id": refund.order_id,
                     "note": staff_note,
                     "policy_version": policy_version or "v1.0"

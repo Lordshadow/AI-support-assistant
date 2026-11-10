@@ -328,6 +328,23 @@ Items damaged during transit must be reported within 48 hours with photographic 
         self.assertEqual(draft["manifest"]["confirmed_policy"]["auto_refund_limit_inr"], 3000)
         self.assertEqual(draft["manifest"]["chunk_count"], 2)
 
+    def test_catalog_preview_returns_source_count_and_sample(self):
+        from unittest.mock import AsyncMock, patch
+
+        sample = {"product_id": "42", "name": "Apex Headphones", "description": "Wireless audio", "faqs": [{"question": "Battery?", "answer": "40 hours"}]}
+        mock_connector = AsyncMock()
+        mock_connector.fetch_page.return_value = {
+            "products": [sample], "pagination": {"total": 1900, "limit": 5},
+        }
+        with patch("ingestion.shop_catalog.get_catalog_connector", return_value=mock_connector), \
+             patch("ingestion.shop_catalog.ShopCatalogConnector.fetch_page", mock_connector.fetch_page):
+            response = self.client.get("/api/admin/v1/knowledge/catalog/preview", headers={"Authorization": "Bearer sess_exec"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["source"], "ApexStore")
+        self.assertEqual(response.json()["total_products"], 1900)
+        self.assertEqual(response.json()["sample"][0]["faqs"], sample["faqs"])
+
     def test_catalog_ingestion_and_deletion_guard_abort(self):
         """Verify catalog ingestion aborts and protects index when items drop by > 20%."""
         tenant_id = "tenant_novaretail"

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select
 
 from db.models import Base, RefundRequest, ConversationSession, AuditEvent, Tenant
-from services.support_desk.outbox_worker import OutboxPaymentWorker
+from services.support_desk.outbox_worker import MockPaymentGateway, OutboxPaymentWorker
 from core.ports import RefundPort, ChannelPort
 
 
@@ -245,6 +245,36 @@ class TestOutboxWorkerAndReconciliation(unittest.TestCase):
             self.assertEqual(recipient, "CUST-WA-USER")
             self.assertTrue(msg.startswith("template:refund_update_v1"))
             self.assertIn("order_id=ORD-WA-88", msg)
+
+        run_async(run_test())
+
+    def test_mock_payment_gateway_is_idempotent(self):
+        async def run_test():
+            gateway = MockPaymentGateway()
+            first = await gateway.process_payment("ORD-QA", 1250, "idem-qa")
+            second = await gateway.process_payment("ORD-QA", 1250, "idem-qa")
+            self.assertEqual(first, second)
+            self.assertEqual(await gateway.query_payment_status("idem-qa"), "paid")
+
+        run_async(run_test())
+
+    def test_worker_run_loop_writes_and_clears_heartbeat(self):
+        async def run_test():
+            worker = OutboxPaymentWorker(refund_port=MockRefundPort())
+            stop_event = asyncio.Event()
+            passes = 0
+
+            async def one_pass():
+                nonlocal passes
+                passes += 1
+                stop_event.set()
+                return 0
+
+            worker.run_once = one_pass
+            heartbeat = Path("test_outbox_worker.heartbeat")
+            await worker.run_forever(0.25, stop_event, str(heartbeat))
+            self.assertEqual(passes, 1)
+            self.assertFalse(heartbeat.exists())
 
         run_async(run_test())
 

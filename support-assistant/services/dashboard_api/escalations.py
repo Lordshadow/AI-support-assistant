@@ -32,9 +32,9 @@ async def list_escalations(
     priority: Optional[str] = Query(None, description="Filter by priority: low, medium, high, urgent"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    staff: StaffSessionContext = Depends(require_roles("executive", "manager")),
+    staff: StaffSessionContext = Depends(require_roles("executive", "manager", "admin")),
 ):
-    """List escalation queue tickets with calculated wait times (Executives & Managers only)."""
+    """List escalation queue tickets with calculated wait times."""
     now = datetime.now(timezone.utc)
     async with get_async_session(tenant_id=staff.tenant_id) as session:
         stmt = select(Escalation).where(Escalation.tenant_id == staff.tenant_id)
@@ -82,7 +82,7 @@ async def list_escalations(
 @router.post("/{esc_id}/claim")
 async def claim_escalation(
     esc_id: str,
-    staff: StaffSessionContext = Depends(require_roles("executive", "manager")),
+    staff: StaffSessionContext = Depends(require_roles("executive", "manager", "admin")),
 ):
     """
     Atomic ticket claim:
@@ -144,7 +144,7 @@ async def claim_escalation(
 async def resolve_escalation(
     esc_id: str,
     req: ResolveRequest,
-    staff: StaffSessionContext = Depends(require_roles("executive", "manager")),
+    staff: StaffSessionContext = Depends(require_roles("executive", "manager", "admin")),
 ):
     """Resolves an escalation with mandatory documentation notes (>= 10 characters)."""
     now = datetime.now(timezone.utc)

@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 import uuid
+import os
+import logging
+import httpx
 from sqlalchemy import select, update
 
 from core.ports import RefundPort, OrderPort
@@ -14,6 +17,8 @@ from core.models import RefundResult, RefundState
 from core.policy_engine import check_refund_eligibility, evaluate_refund_state, DEFAULT_REFUND_AUTO_LIMIT_INR
 from db.models import RefundRequest, Tenant
 from db.session import get_async_session
+
+logger = logging.getLogger(__name__)
 
 
 class PostgresRefundRepository:
@@ -66,9 +71,13 @@ class PostgresRefundRepository:
         self,
         customer_id: str,
         order_id: str,
-        item_id: Optional[str] = None
+        item_id: Optional[str] = None,
+        customer_token: Optional[str] = None,
     ) -> tuple[bool, str, Decimal | int]:
-        order = await self._order_port.get_order(customer_id, order_id)
+        if customer_token:
+            order = await self._order_port.get_order(customer_id, order_id, customer_token=customer_token)
+        else:
+            order = await self._order_port.get_order(customer_id, order_id)
         if not order:
             return False, f"Order '{order_id}' was not found for this account.", 0
 
@@ -81,7 +90,9 @@ class PostgresRefundRepository:
         order_id: str,
         amount_inr: Decimal | int,
         reason: str,
-        idempotency_key: str
+        idempotency_key: str,
+        customer_token: Optional[str] = None,
+        storefront_verification_token: Optional[str] = None,
     ) -> RefundResult:
         amount_inr = Decimal(str(amount_inr)).quantize(Decimal("0.01"))
         if not amount_inr.is_finite() or amount_inr <= 0:
@@ -97,7 +108,9 @@ class PostgresRefundRepository:
                 return self._to_domain(existing)
 
             # 2. Check Eligibility
-            is_eligible, policy_reason, max_amount = await self.check_eligibility(customer_id, order_id)
+            is_eligible, policy_reason, max_amount = await self.check_eligibility(
+                customer_id, order_id, customer_token=customer_token
+            )
             now = datetime.now(timezone.utc)
             refund_id = f"REF-{uuid.uuid4().hex[:8].upper()}"
 
@@ -112,7 +125,7 @@ class PostgresRefundRepository:
                     idempotency_key=idempotency_key,
                     reason=reason,
                     request_time=now,
-                    decided_by="policy_engine",
+                    decided_by=None,
                     decided_at=now,
                     staff_note=policy_reason,
                     eligibility_snapshot={"eligible": False, "reason": policy_reason},
@@ -131,7 +144,7 @@ class PostgresRefundRepository:
                     idempotency_key=idempotency_key,
                     reason=reason,
                     request_time=now,
-                    decided_by="policy_engine",
+                    decided_by=None,
                     decided_at=now,
                     staff_note="Requested amount exceeds the verified eligible amount.",
                     eligibility_snapshot={"eligible": False, "reason": "amount_exceeds_eligible", "max_amount": str(max_amount)},
@@ -139,11 +152,42 @@ class PostgresRefundRepository:
                 session.add(req)
                 return self._to_domain(req)
 
+            # Storefront customers must create the actual customer-visible
+            # return/refund in ApexStore before we mirror it into this queue.
+            storefront_result = None
+            if customer_token and storefront_verification_token:
+                storefront_result = await self._create_storefront_refund(
+                    customer_id=customer_id,
+                    order_id=order_id,
+                    reason=reason,
+                    idempotency_key=idempotency_key,
+                    customer_token=customer_token,
+                    verification_token=storefront_verification_token,
+                )
+                if not storefront_result:
+                    return RefundResult(
+                        refund_id="STORE_SYNC_FAILED",
+                        order_id=order_id,
+                        customer_id=customer_id,
+                        amount_inr=amount_inr,
+                        state=RefundState.FAILED,
+                        idempotency_key=idempotency_key,
+                        reason=reason,
+                        message="The store could not confirm this return. No refund request was recorded; please try again or contact support.",
+                        created_at=now,
+                    )
+                amount_inr = Decimal(str(storefront_result["amount"])).quantize(Decimal("0.01"))
+
             # 3. Determine initial state using the current tenant policy.
             tenant = await session.get(Tenant, self.tenant_id)
             cfg = (tenant.widget_config or {}) if tenant else {}
             auto_limit = Decimal(str(cfg.get("auto_refund_limit_inr", self._auto_limit_inr)))
-            state = evaluate_refund_state(amount_inr, auto_limit_inr=auto_limit)
+            if storefront_result and storefront_result.get("status") == "Processed":
+                state = RefundState.PROCESSED
+            elif storefront_result and storefront_result.get("status") == "Requested":
+                state = RefundState.PENDING_APPROVAL
+            else:
+                state = evaluate_refund_state(amount_inr, auto_limit_inr=auto_limit)
             req = RefundRequest(
                 refund_id=refund_id,
                 tenant_id=self.tenant_id,
@@ -154,9 +198,17 @@ class PostgresRefundRepository:
                 idempotency_key=idempotency_key,
                 reason=reason,
                 request_time=now,
-                decided_by="auto_engine" if state == RefundState.PROCESSED else None,
+                # decided_by references staff_users.staff_id. Automatic store
+                # processing has no staff actor and must remain NULL.
+                decided_by=None,
                 decided_at=now if state == RefundState.PROCESSED else None,
-                eligibility_snapshot={"eligible": True, "max_amount": max_amount},
+                    # JSON columns do not support Decimal directly. Keep money exact
+                    # by storing the canonical decimal text instead of a float.
+                    eligibility_snapshot={
+                        "eligible": True,
+                        "max_amount": str(max_amount),
+                        **({"storefront_refund_id": str(storefront_result["id"])} if storefront_result else {}),
+                    },
             )
             session.add(req)
             if state == RefundState.PROCESSED:
@@ -234,3 +286,67 @@ class PostgresRefundRepository:
     async def query_payment_status(self, idempotency_key: str) -> Optional[str]:
         """Look up status from payment provider by idempotency key."""
         return self._payment_transactions.get(idempotency_key)
+
+    async def _create_storefront_refund(
+        self,
+        customer_id: str,
+        order_id: str,
+        reason: str,
+        idempotency_key: str,
+        customer_token: str,
+        verification_token: str,
+    ) -> Optional[dict]:
+        """Create and process an eligible automatic return in ApexStore."""
+        base_url = os.getenv("APEXSTORE_CATALOG_API_URL", "").rstrip("/")
+        api_token = os.getenv("APEXSTORE_CATALOG_API_TOKEN", "").strip()
+        if not base_url or not api_token or not str(customer_id).isdigit():
+            logger.error("Store refund integration is missing required configuration")
+            return None
+
+        order = await self._order_port.get_order(customer_id, order_id, customer_token=customer_token)
+        if not order:
+            return None
+        try:
+            items = [
+                {"product_id": int(item.product_id), "quantity": int(item.quantity)}
+                for item in order.items
+            ]
+        except (TypeError, ValueError):
+            logger.warning("Store refund could not map order items to storefront product IDs")
+            return None
+        if not items:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    f"{base_url}/refunds",
+                    headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Idempotency-Key": idempotency_key,
+                    },
+                    json={
+                        "order_id": order_id,
+                        "customer_id": int(customer_id),
+                        "items": items,
+                        "reason": reason[:1000],
+                        "verification_token": verification_token,
+                        "idempotency_key": idempotency_key,
+                    },
+                )
+            data = response.json()
+            refund = data.get("refund") if isinstance(data, dict) else None
+            if response.status_code not in (200, 201) or not isinstance(refund, dict):
+                logger.info("Store declined refund request with HTTP %s", response.status_code)
+                return None
+            if refund.get("status") not in {"Processed", "Requested"}:
+                logger.info("Store refund is not in a customer-visible state")
+                return None
+            return {
+                "id": refund.get("id"),
+                "amount": refund.get("amount"),
+                "status": refund.get("status"),
+            }
+        except (httpx.HTTPError, ValueError, TypeError):
+            logger.exception("Store refund request failed before confirmation")
+            return None

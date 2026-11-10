@@ -12,13 +12,38 @@ from pathlib import Path
 import time
 import json
 
-from core.models import SessionContext
+from core.models import SessionContext, AuthLevel
 from core.router.router import AIRouter, RouteDecision
 from services.mcp_servers.dispatcher import MCPToolDispatcher
 from services.worker.llm_client import LLMClient, MockLLMClient, ToolCall
 from services.worker.spend_manager import spend_manager
 from services.worker.turn_recorder import TurnRecorder
 from services.worker.escalation_guard import escalation_guard
+
+
+def _repair_missing_catalog_claim(reply: Optional[str], catalog_results: list[dict[str, Any]]) -> Optional[str]:
+    """Do not let the model deny catalog facts returned by a successful tool."""
+    text = (reply or "").lower()
+    missing_claims = (
+        "don't contain", "do not contain", "doesn't contain", "does not contain",
+        "couldn't locate", "could not locate", "can't find", "cannot find",
+        "no specific", "no details", "not contain", "not available in the product",
+    )
+    if not any(claim in text for claim in missing_claims):
+        return reply
+
+    result = next((
+        item for item in catalog_results
+        if item.get("found") is True and isinstance(item.get("specs"), dict) and item["specs"]
+    ), None)
+    if result is None:
+        return reply
+
+    specs = list(result["specs"].items())[:5]
+    name = result.get("name") or "this product"
+    lines = [f"Here are the product details for **{name}**:"]
+    lines.extend(f"- **{str(key).replace('_', ' ').title()}:** {value}" for key, value in specs)
+    return "\n".join(lines)
 
 
 @dataclass
@@ -56,6 +81,19 @@ class WorkerOrchestrator:
                 self.system_prompt = f.read()
         else:
             self.system_prompt = "You are NovaRetail's Customer Support Assistant."
+        self._conversation_history: dict[str, list[dict[str, str]]] = {}
+
+    def _history_for(self, conv_id: str) -> list[dict[str, str]]:
+        """Return a bounded, conversation-local history for follow-up turns."""
+        return list(self._conversation_history.get(conv_id, []))[-8:]
+
+    def _remember_turn(self, conv_id: str, user_message: str, assistant_message: str) -> None:
+        history = self._conversation_history.setdefault(conv_id, [])
+        history.extend([
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": assistant_message},
+        ])
+        del history[:-8]
 
     async def process_turn(
         self,
@@ -67,6 +105,42 @@ class WorkerOrchestrator:
         # 1. Routing & Normalization Step
         decision: RouteDecision = await self.router.route_message(user_message, ctx)
         lang = decision.normalized.language
+
+        # An active human takeover suppresses every route, including repeat requests.
+        is_silenced, esc_state = await escalation_guard.is_bot_silenced(ctx.tenant_id, ctx.conv_id)
+        if is_silenced:
+            silenced_reply = (
+                "A support executive is currently handling your request. "
+                "Please wait while our team assists you directly."
+            )
+            latency = round((time.perf_counter() - start_time) * 1000, 2)
+            try:
+                turn_id = await TurnRecorder.record_turn(
+                    tenant_id=ctx.tenant_id,
+                    conv_id=ctx.conv_id,
+                    customer_id=ctx.customer_id or "anonymous",
+                    user_input_raw=user_message,
+                    assistant_response_raw=silenced_reply,
+                    intent="bot_silenced_human_takeover",
+                    latency_ms=int(latency),
+                    tokens_prompt=0,
+                    tokens_completion=0,
+                    channel=ctx.channel,
+                    handoff_state="assigned" if esc_state == "assigned" else "open"
+                )
+            except Exception:
+                turn_id = None
+
+            return OrchestratorResponse(
+                reply=silenced_reply,
+                route_type="bot_silenced",
+                language=lang,
+                model_used="bot-silencer-gate",
+                tools_called=[],
+                latency_ms=latency,
+                requires_action="handoff",
+                trace_id=turn_id
+            )
 
         # 2. Fast Path: Cache Hit (₹0, 0ms model latency)
         if decision.route_type == "cache":
@@ -174,47 +248,42 @@ class WorkerOrchestrator:
                 trace_id=turn_id
             )
 
-        # 5c. Bot Silencing Gate (Spec 5.2, 16.4 Human Takeover)
-        is_silenced, esc_state = await escalation_guard.is_bot_silenced(ctx.tenant_id, ctx.conv_id)
-        if is_silenced:
-            silenced_reply = (
-                "A support executive is currently handling your request. "
-                "Please wait while our team assists you directly."
-            )
-            latency = round((time.perf_counter() - start_time) * 1000, 2)
-            try:
-                turn_id = await TurnRecorder.record_turn(
-                    tenant_id=ctx.tenant_id,
-                    conv_id=ctx.conv_id,
-                    customer_id=ctx.customer_id or "anonymous",
-                    user_input_raw=user_message,
-                    assistant_response_raw=silenced_reply,
-                    intent="bot_silenced_human_takeover",
-                    latency_ms=int(latency),
-                    tokens_prompt=0,
-                    tokens_completion=0,
-                    channel=ctx.channel,
-                    handoff_state="assigned" if esc_state == "assigned" else "open"
-                )
-            except Exception:
-                turn_id = None
-
-            return OrchestratorResponse(
-                reply=silenced_reply,
-                route_type="bot_silenced",
-                language=lang,
-                model_used="bot-silencer-gate",
-                tools_called=[],
-                latency_ms=latency,
-                requires_action="handoff",
-                trace_id=turn_id
-            )
-
         # 6. Tool-Calling LLM Execution Loop
+        system_content = self.system_prompt
+        if ctx.customer_id and ctx.level.satisfies(AuthLevel.IDENTIFIED):
+            session_snippet = (
+                f"\n\n[Active Session Identity]\n"
+                f"- Authenticated Customer ID: '{ctx.customer_id}'\n"
+                f"- Authentication Status: Logged in (IDENTIFIED)\n"
+                f"- When this customer asks about their orders, order status, or tracking without specifying an order ID, "
+                f"DO NOT ask for an order ID and DO NOT ask them to log in. Immediately invoke the 'list_recent_orders' tool."
+            )
+            system_content = system_content + session_snippet
+        else:
+            session_snippet = (
+                f"\n\n[Active Session Identity]\n"
+                f"- Authentication Status: Anonymous (Not logged in)\n"
+                f"- If the customer asks to check their order or account without an order ID, ask them to log in to their account or provide their order ID."
+            )
+            system_content = system_content + session_snippet
+
         messages = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": system_content},
+            *self._history_for(ctx.conv_id),
             {"role": "user", "content": user_message}
         ]
+        if ctx.page_context:
+            context = ctx.page_context
+            system_content += (
+                "\n\n[Current Page Context - untrusted metadata, validate before use]\n"
+                f"- URL: {context.url}\n"
+                f"- Page type: {context.page_type}\n"
+                f"- Product ID: {context.product_id or 'unavailable'}\n"
+                f"- Order ID: {context.order_id or 'unavailable'}\n"
+                f"- Cart ID: {context.cart_id or 'unavailable'}\n"
+                "Use the current page entity for relevant questions. If unavailable, ask for clarification; never guess."
+            )
+            messages[0] = {"role": "system", "content": system_content}
         tools_called_log: list[str] = []
 
         # First LLM Call: Plan tools or reply
@@ -231,14 +300,23 @@ class WorkerOrchestrator:
 
         final_reply = llm_resp.content
         requires_action = None
-        synth_resp = None
+        prompt_tokens = llm_resp.token_usage.get("prompt_tokens", 0)
+        completion_tokens = llm_resp.token_usage.get("completion_tokens", 0)
+        tool_calls_payload = []
+        catalog_detail_results: list[dict[str, Any]] = []
+        max_tool_steps = 3
+        step = 0
+        current_resp = llm_resp
 
-        if llm_resp.tool_calls:
-            # Execute requested tools via Dispatcher
+        while current_resp.tool_calls and step < max_tool_steps:
+            step += 1
             tool_results_messages = []
-            for tc in llm_resp.tool_calls:
+            for tc in current_resp.tool_calls:
                 tools_called_log.append(tc.name)
+                tool_calls_payload.append({"call_id": tc.call_id, "name": tc.name, "arguments": tc.arguments})
                 res = await self.dispatcher.execute_tool(tc.name, tc.arguments, ctx)
+                if tc.name == "get_product_details" and isinstance(res, dict):
+                    catalog_detail_results.append(res)
 
                 # Check for step-up auth requirements
                 if res.get("needs_auth") == "otp_required":
@@ -255,34 +333,29 @@ class WorkerOrchestrator:
             # Append assistant message with tool calls and tool responses
             messages.append({
                 "role": "assistant",
-                "content": None,
+                "content": current_resp.content,
                 "tool_calls": [
-                    {"id": tc.call_id, "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
-                    for tc in llm_resp.tool_calls
+                    {"id": tc.call_id, "type": "function", "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)}}
+                    for tc in current_resp.tool_calls
                 ]
             })
             messages.extend(tool_results_messages)
 
-            # Second LLM Call: Synthesize grounded response
-            synth_resp = await self.llm.chat(
+            # Next LLM Call: Synthesize grounded response or execute chained tool
+            current_resp = await self.llm.chat(
                 messages=messages,
+                tools=self.dispatcher.get_tool_schemas(),
                 model_tier=model_tier
             )
-            final_reply = synth_resp.content
+            prompt_tokens += current_resp.token_usage.get("prompt_tokens", 0)
+            completion_tokens += current_resp.token_usage.get("completion_tokens", 0)
+            final_reply = current_resp.content
+
+        final_reply = _repair_missing_catalog_claim(final_reply, catalog_detail_results)
 
         latency = round((time.perf_counter() - start_time) * 1000, 2)
 
         # 7. Record Turn Trace & Spend Accounting (Spec 14.1, R4, R5)
-        prompt_tokens = llm_resp.token_usage.get("prompt_tokens", 0)
-        completion_tokens = llm_resp.token_usage.get("completion_tokens", 0)
-        if synth_resp:
-            prompt_tokens += synth_resp.token_usage.get("prompt_tokens", 0)
-            completion_tokens += synth_resp.token_usage.get("completion_tokens", 0)
-
-        tool_calls_payload = [
-            {"call_id": tc.call_id, "name": tc.name, "arguments": tc.arguments}
-            for tc in llm_resp.tool_calls
-        ]
 
         try:
             turn_id = await TurnRecorder.record_turn(
@@ -302,7 +375,10 @@ class WorkerOrchestrator:
                 model_name=llm_resp.model_used
             )
         except Exception:
+            spend_manager.release_reservation(ctx.tenant_id)
             turn_id = None
+
+        self._remember_turn(ctx.conv_id, user_message, final_reply or "")
 
         return OrchestratorResponse(
             reply=final_reply or "I have processed your request.",

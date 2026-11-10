@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 
 from db.models import (
-    ConversationSession, ConversationTurn, TurnRaw, AuditEvent
+    ConversationSession, ConversationTurn, TurnRaw, AuditEvent, SpendLedger
 )
 from db.session import get_async_session
 from services.dashboard_api.dependencies import (
@@ -150,6 +150,14 @@ async def get_turn_trace(
         if not turn:
             raise HTTPException(status_code=404, detail="Turn record not found.")
 
+        spend_stmt = (
+            select(SpendLedger)
+            .where(SpendLedger.tenant_id == staff.tenant_id, SpendLedger.turn_id == turn_id)
+            .order_by(SpendLedger.created_at.desc())
+            .limit(1)
+        )
+        spend = (await session.execute(spend_stmt)).scalars().first()
+
         # Audit trace read
         audit = AuditEvent(
             event_id=f"AUD-{uuid.uuid4().hex[:12].upper()}",
@@ -172,6 +180,8 @@ async def get_turn_trace(
             "latency_ms": turn.latency_ms,
             "tokens_prompt": turn.tokens_prompt,
             "tokens_completion": turn.tokens_completion,
+            "model_name": spend.model if spend else None,
+            "cost_inr": spend.cost_inr if spend else None,
             "tool_calls": turn.tool_calls_json,
             "grounding_score": turn.grounding_score,
             "user_masked": turn.user_input_masked,

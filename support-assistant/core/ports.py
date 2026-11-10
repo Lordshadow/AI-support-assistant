@@ -23,15 +23,15 @@ except ImportError:
 class OrderPort(Protocol):
     """Port for retrieving order information and shipping tracking."""
 
-    async def get_order(self, customer_id: str, order_id: str) -> Optional[Order]:
+    async def get_order(self, customer_id: str, order_id: str, customer_token: Optional[str] = None) -> Optional[Order]:
         """Fetch order belonging to customer_id. Returns None if not found or not owned."""
         ...
 
-    async def list_recent_orders(self, customer_id: str, limit: int = 5) -> list[Order]:
+    async def list_recent_orders(self, customer_id: str, limit: int = 5, customer_token: Optional[str] = None) -> list[Order]:
         """List the customer's most recent orders."""
         ...
 
-    async def get_tracking(self, customer_id: str, order_id: str) -> list[TrackingEvent]:
+    async def get_tracking(self, customer_id: str, order_id: str, customer_token: Optional[str] = None) -> list[TrackingEvent]:
         """Fetch shipping tracking timeline for an owned order."""
         ...
 
@@ -91,7 +91,8 @@ class RefundPort(Protocol):
         self,
         customer_id: str,
         order_id: str,
-        item_id: Optional[str] = None
+        item_id: Optional[str] = None,
+        customer_token: Optional[str] = None,
     ) -> tuple[bool, str, int]:
         """
         Check if an order/item is eligible.
@@ -105,7 +106,9 @@ class RefundPort(Protocol):
         order_id: str,
         amount_inr: int,
         reason: str,
-        idempotency_key: str
+        idempotency_key: str,
+        customer_token: Optional[str] = None,
+        storefront_verification_token: Optional[str] = None,
     ) -> RefundResult:
         """Submit a refund request with an idempotency key."""
         ...

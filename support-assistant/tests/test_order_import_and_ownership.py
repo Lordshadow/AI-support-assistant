@@ -174,6 +174,58 @@ class TestOrderRepositoryOwnership(unittest.TestCase):
         finally:
             order_module.get_async_session = original_session
 
+    def test_storefront_order_lookup_forwards_signed_token_and_skips_local_cache(self):
+        from unittest.mock import patch
+        import adapters.postgres.order_repository as order_module
+
+        payload = {
+            "order_id": "ORD-LIVE-1", "customer_id": "7", "status": "Processing",
+            "created_at": "2026-11-10T00:00:00+00:00", "total": "25.00",
+            "items": [{"product_id": "P1", "name": "Demo item", "category": "electronics", "unit_price": "25.00", "quantity": 1}],
+        }
+
+        class Response:
+            status_code = 200
+            def json(self): return {"order": payload}
+
+        class Client:
+            params = None
+            def __init__(self, **kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): return False
+            async def get(self, url, **kwargs):
+                self.__class__.params = kwargs["params"]
+                return Response()
+
+        repo = PostgresOrderRepository("test", store_api_url="https://store.invalid", store_api_token="machine-token")
+        with patch.object(order_module.httpx, "AsyncClient", Client), \
+             patch.object(order_module, "get_async_session", side_effect=AssertionError("must not trust local cache for storefront token")):
+            order = run_sync(repo.get_order("7", "ORD-LIVE-1", customer_token="signed-customer-token"))
+
+        self.assertEqual(order.order_id, "ORD-LIVE-1")
+        self.assertEqual(Client.params["customer_id"], "7")
+        self.assertEqual(Client.params["customer_token"], "signed-customer-token")
+
+    def test_rejected_storefront_token_does_not_fall_back_to_cached_order(self):
+        from unittest.mock import patch
+        import adapters.postgres.order_repository as order_module
+
+        class Response:
+            status_code = 404
+
+        class Client:
+            def __init__(self, **kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): return False
+            async def get(self, *args, **kwargs): return Response()
+
+        repo = PostgresOrderRepository("test", store_api_url="https://store.invalid", store_api_token="machine-token")
+        with patch.object(order_module.httpx, "AsyncClient", Client), \
+             patch.object(order_module, "get_async_session", side_effect=AssertionError("rejected tokens must not read cached orders")):
+            order = run_sync(repo.get_order("7", "ORD-LIVE-1", customer_token="rejected-token"))
+
+        self.assertIsNone(order)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,7 +29,7 @@ export const StaffAdminPage: React.FC = () => {
   const [staffForm, setStaffForm] = useState({ full_name: '', email: '', password: '', role: 'executive' });
 
   // 1. Fetch active sessions
-  const { data: sessions = [], isLoading } = useQuery<any[]>({
+  const { data: sessions = [], isLoading, isError: sessionsError, refetch: refetchSessions } = useQuery<any[]>({
     queryKey: ['staffSessions'],
     queryFn: async () => {
       const resp = await api.get('/api/admin/v1/auth/sessions');
@@ -237,6 +237,8 @@ export const StaffAdminPage: React.FC = () => {
           >
             {isLoading ? (
               <TableSkeleton rows={4} />
+            ) : sessionsError ? (
+              <div role="alert" className="space-y-3 py-5 text-sm text-[#FF8585]">Staff sessions could not be loaded.<Button size="sm" variant="secondary" onClick={() => refetchSessions()}>Retry</Button></div>
             ) : sessions.length === 0 ? (
               <p className="text-center py-8 text-sm text-[#84ABA6]">
                 No active staff sessions recorded.

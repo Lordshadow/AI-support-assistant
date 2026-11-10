@@ -31,6 +31,7 @@ class OTPRecord:
     challenge_id: str
     tenant_id: str
     conv_id: str
+    customer_id: Optional[str]
     destination: str
     salt: str
     hashed_code: str
@@ -52,6 +53,12 @@ class OTPService:
     def _hash_code(self, code: str, salt: str) -> str:
         """Derives SHA-256 digest of code + salt."""
         return hashlib.sha256(f"{salt}:{code}".encode("utf-8")).hexdigest()
+
+    def invalidate_challenge(self, challenge_id: str) -> None:
+        """Invalidate a challenge when the delivery adapter rejects it."""
+        record = self._challenges.get(challenge_id)
+        if record:
+            record.is_invalidated = True
 
     def generate_otp_code(self) -> str:
         """Generates a secure 6-digit numeric OTP string."""
@@ -81,6 +88,7 @@ class OTPService:
             challenge_id=challenge_id,
             tenant_id=session.tenant_id,
             conv_id=session.conv_id,
+            customer_id=str(session.customer_id) if session.customer_id is not None else None,
             destination=destination,
             salt=salt,
             hashed_code=hashed_code,
@@ -119,6 +127,12 @@ class OTPService:
 
         if record.is_verified:
             return False, "This OTP challenge has already been verified and consumed.", session
+
+        if (record.tenant_id, record.conv_id, record.customer_id) != (
+            session.tenant_id, session.conv_id,
+            str(session.customer_id) if session.customer_id is not None else None,
+        ):
+            return False, "OTP challenge does not belong to this customer session.", session
 
         if now > record.expires_at:
             record.is_invalidated = True

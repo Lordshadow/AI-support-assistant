@@ -155,10 +155,10 @@
           const list = await res.json();
           renderTable(list);
         } else {
-          renderFallbackTable();
+          renderLoadError(res.status === 401 ? "Sign in through the Master Control Dashboard to review refunds." : "Unable to load the refund queue.");
         }
       } catch (e) {
-        renderFallbackTable();
+        renderLoadError("Unable to connect to the refund service.");
       }
     }
 
@@ -188,11 +188,9 @@
       `).join("");
     }
 
-    function renderFallbackTable() {
-      renderTable([
-        { refund_id: "REF-8812A", order_id: "ORD-8812", customer_id: "CUST-42", amount_inr: 4500, reason: "Smartwatch display stopped responding", state: "pending_approval" },
-        { refund_id: "REF-9921B", order_id: "ORD-9921", customer_id: "CUST-88", amount_inr: 3299, reason: "Wireless speaker battery defect", state: "pending_approval" }
-      ]);
+    function renderLoadError(message) {
+      document.getElementById("refundTable").innerHTML =
+        `<tr><td colspan="7" style="text-align:center;color:#fca5a5;padding:2rem;">${message} <a href="/" style="color:#93c5fd;">Open dashboard</a></td></tr>`;
     }
 
     function openDecisionModal(refundId, orderId, amount, reason, action) {
@@ -226,16 +224,19 @@
 
       try {
         const endpoint = `/desk/refunds/${activeRefund.refundId}/${action}`;
+        const csrf = localStorage.getItem("novaretail_csrf") || "";
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ staff_id: "STAFF-882", notes: note })
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+          body: JSON.stringify({ notes: note })
         });
-        if (res.ok) {
-          alert(`Refund ${activeRefund.refundId} has been ${action}d successfully.`);
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({}));
+          throw new Error(error.detail || `Refund request failed (${res.status}).`);
         }
+        alert(`Refund ${activeRefund.refundId} has been ${action}d successfully.`);
       } catch (e) {
-        alert(`Refund ${activeRefund.refundId} ${action}d in demo console.`);
+        alert(e.message || `Refund ${activeRefund.refundId} could not be processed.`);
       }
       closeDecisionModal();
       loadPending();

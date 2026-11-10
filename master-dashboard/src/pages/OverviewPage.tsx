@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { Panel, Card, Button, StatusBadge, ArchControl, Skeleton } from '../components/ui';
 import {
   CreditCard,
@@ -17,6 +18,8 @@ import {
 
 export const OverviewPage: React.FC = () => {
   const navigate = useNavigate();
+  const { staff } = useAuth();
+  const canViewReports = staff?.role === 'manager' || staff?.role === 'admin';
   const healthRef = useRef<HTMLDivElement>(null);
 
   // 1. Fetch pending refunds
@@ -41,19 +44,20 @@ export const OverviewPage: React.FC = () => {
 
   // 3. Fetch reports & spend metrics
   const { data: reports, isLoading: reportsLoading, isError: reportsError, refetch: refetchReports } = useQuery({
-    queryKey: ['dashboardReport'],
+    queryKey: ['dashboardReport', staff?.role],
     queryFn: async () => {
       const resp = await api.get('/api/admin/v1/reports');
       return resp.data || {};
     },
     refetchInterval: 30000,
+    enabled: canViewReports,
   });
 
-  const { data: health } = useQuery({
+  const { data: health, isError: healthError, refetch: refetchHealth } = useQuery({
     queryKey: ['serviceHealth'],
     queryFn: async () => (await api.get('/health')).data,
     refetchInterval: 30000,
-    retry: 1,
+    retry: false,
   });
 
   const pendingRefundsCount = refunds?.length ?? 0;
@@ -110,12 +114,13 @@ export const OverviewPage: React.FC = () => {
         </div>
       </div>
 
-      {(refundsError || escalationsError || reportsError) && (
+      {(refundsError || escalationsError || reportsError || healthError) && (
         <div role="alert" className="p-3 rounded-xl border border-[rgba(255,82,82,0.35)] bg-[rgba(255,82,82,0.1)] text-sm text-[#FF8585] flex flex-wrap items-center gap-3">
           <span>Some overview data could not be loaded.</span>
           {refundsError && <Button size="sm" variant="secondary" onClick={() => refetchRefunds()}>Retry refunds</Button>}
           {escalationsError && <Button size="sm" variant="secondary" onClick={() => refetchEscalations()}>Retry escalations</Button>}
           {reportsError && <Button size="sm" variant="secondary" onClick={() => refetchReports()}>Retry reports</Button>}
+          {healthError && <Button size="sm" variant="secondary" onClick={() => refetchHealth()}>Retry service health</Button>}
         </div>
       )}
 
@@ -210,24 +215,24 @@ export const OverviewPage: React.FC = () => {
           microCaption="AUTOMATION SUCCESS"
           title="Deflection Rate"
           actionTitle="View reports"
-          onAction={() => navigate('/reports')}
+          onAction={canViewReports ? () => navigate('/reports') : undefined}
         >
           {reportsLoading ? (
             <Skeleton height="36px" width="50%" />
           ) : (
             <div className="mt-2 flex items-baseline justify-between">
               <span className="text-3xl font-extrabold text-[#EAF6F4] font-mono">
-                {deflectionRatePct == null ? 'Unavailable' : `${deflectionRatePct}%`}
+                {deflectionRatePct == null ? (canViewReports ? 'Unavailable' : 'Restricted') : `${deflectionRatePct}%`}
               </span>
               <StatusBadge
                 status={deflectionRatePct == null ? 'warning' : deflectionRatePct >= 80 ? 'success' : 'warning'}
-                label={deflectionRatePct == null ? 'No report data' : deflectionRatePct >= 80 ? 'Above Target' : 'Sub-Optimal'}
+                label={deflectionRatePct == null ? (canViewReports ? 'No report data' : 'Manager access required') : deflectionRatePct >= 80 ? 'Above Target' : 'Sub-Optimal'}
                 size="sm"
               />
             </div>
           )}
           <p className="text-xs text-[#84ABA6] mt-3">
-            Inquiries resolved autonomously without escalation (Target: &gt;= 80%).
+            {canViewReports ? 'Inquiries resolved autonomously without escalation (Target: >= 80%).' : 'Report metrics are available to managers and admins.'}
           </p>
         </Card>
 
@@ -237,7 +242,7 @@ export const OverviewPage: React.FC = () => {
           microCaption="FINANCIAL CONTROL"
           title="Token Spend Today"
           actionTitle="Inspect spend ledger"
-          onAction={() => navigate('/reports')}
+          onAction={canViewReports ? () => navigate('/reports') : undefined}
         >
           {reportsLoading ? (
             <Skeleton height="36px" width="50%" />
@@ -245,7 +250,7 @@ export const OverviewPage: React.FC = () => {
             <div>
               <div className="mt-2 flex items-baseline justify-between">
                 <span className="text-2xl font-extrabold text-[#EAF6F4] font-mono">
-                  {dailySpend == null ? 'Unavailable' : `₹${dailySpend.toLocaleString('en-IN')}`}
+                  {dailySpend == null ? (canViewReports ? 'Unavailable' : 'Restricted') : `₹${dailySpend.toLocaleString('en-IN')}`}
                 </span>
                 <span className="text-xs text-[#84ABA6]">
                   {dailyCap == null ? '' : `Cap: ₹${dailyCap.toLocaleString('en-IN')}`}
@@ -262,7 +267,7 @@ export const OverviewPage: React.FC = () => {
             </div>
           )}
           <p className="text-xs text-[#84ABA6] mt-3">
-            {dailySpend == null || dailyCap == null ? 'Spend budget data unavailable.' : `${spendPct}% of daily budget consumed.`}
+            {dailySpend == null || dailyCap == null ? (canViewReports ? 'Spend budget data unavailable.' : 'Report metrics are available to managers and admins.') : `${spendPct}% of daily budget consumed.`}
           </p>
         </Card>
       </div>
@@ -359,8 +364,8 @@ export const OverviewPage: React.FC = () => {
                 <Zap className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-xs font-bold text-[#EAF6F4]">LLM Orchestrator Gateway</p>
-                <p className="text-[11px] text-[#B6D5D1]">{reports?.latency_p50_ms == null ? 'Latency unavailable' : `Latency p50: ${reports.latency_p50_ms}ms`}</p>
+                <p className="text-xs font-bold text-[#EAF6F4]">Assistant API</p>
+                <p className="text-[11px] text-[#B6D5D1]">{reports?.latency_p50_ms == null ? 'Observed latency unavailable' : `Observed p50 latency: ${reports.latency_p50_ms}ms`}</p>
                 <StatusBadge status={health?.status === 'healthy' ? 'success' : health ? 'danger' : 'warning'} label={health?.status || 'Unavailable'} size="sm" className="mt-1.5" />
               </div>
             </div>
@@ -370,8 +375,8 @@ export const OverviewPage: React.FC = () => {
                 <Database className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-xs font-bold text-[#EAF6F4]">PostgreSQL & pgvector</p>
-                <p className="text-[11px] text-[#B6D5D1]">PostgreSQL dependency health</p>
+                <p className="text-xs font-bold text-[#EAF6F4]">PostgreSQL</p>
+                <p className="text-[11px] text-[#B6D5D1]">Database dependency health</p>
                 <StatusBadge status={health?.dependencies?.postgres === 'healthy' ? 'success' : health?.dependencies?.postgres ? 'danger' : 'warning'} label={health?.dependencies?.postgres || 'Unavailable'} size="sm" className="mt-1.5" />
               </div>
             </div>
@@ -381,8 +386,8 @@ export const OverviewPage: React.FC = () => {
                 <ShieldCheck className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-xs font-bold text-[#EAF6F4]">Staff Auth & Session Gate</p>
-                <p className="text-[11px] text-[#B6D5D1]">Redis dependency health</p>
+                <p className="text-xs font-bold text-[#EAF6F4]">Redis Session Store</p>
+                <p className="text-[11px] text-[#B6D5D1]">Session dependency health</p>
                 <StatusBadge status={health?.dependencies?.redis === 'healthy' ? 'success' : health?.dependencies?.redis ? 'danger' : 'warning'} label={health?.dependencies?.redis || 'Unavailable'} size="sm" className="mt-1.5" />
               </div>
             </div>

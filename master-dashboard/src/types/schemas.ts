@@ -55,12 +55,17 @@ export const RefundItemSchema = z.object({
   customer_id: z.string(),
   amount_inr: z.number(),
   reason: z.string(),
-  state: z.enum(['pending_approval', 'approved', 'rejected', 'processing', 'completed']),
+  state: z.enum(['pending_approval', 'approved', 'rejected', 'processing', 'completed', 'processed']),
   created_at: z.string(),
-  customer_trust_level: z.enum(['anonymous', 'identified', 'verified']).default('verified'),
+  decided_at: z.string().nullable().optional(),
+  decided_by: z.string().nullable().optional(),
+  staff_note: z.string().nullable().optional(),
+  customer_trust_level: z.enum(['anonymous', 'identified', 'verified', 'unknown']).optional().default('unknown'),
   requested_by: z.string().optional().nullable(),
   order_items: z.array(RefundOrderItemSchema).optional().default([]),
   checks: z.array(RefundCheckItemSchema).optional().default([]),
+  eligibility_snapshot: z.record(z.string(), z.unknown()).optional().default({}),
+  policy_version_applied: z.string().nullable().optional(),
 });
 export type RefundItem = z.infer<typeof RefundItemSchema>;
 
@@ -98,7 +103,9 @@ export const RetrievedChunkSchema = z.object({
 export type RetrievedChunk = z.infer<typeof RetrievedChunkSchema>;
 
 export const ToolCallTraceSchema = z.object({
-  tool: z.string(),
+  tool: z.string().optional(),
+  name: z.string().optional(),
+  tool_name: z.string().optional(),
   arguments: z.record(z.string(), z.any()),
   result: z.any().optional(),
   latency_ms: z.number().optional(),

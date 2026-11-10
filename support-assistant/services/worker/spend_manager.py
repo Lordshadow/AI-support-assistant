@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, Any
 import uuid
 import logging
+from threading import RLock
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +50,9 @@ class SpendManager:
         # In-memory accumulators: {tenant_id: {"daily": float, "monthly": float, "date": str}}
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._alerted_80: set = set()
+        # Reserve and release in-flight capacity atomically across concurrent
+        # turns handled by this process.
+        self._reservation_lock = RLock()
 
     def _get_cache_bucket(self, tenant_id: str) -> Dict[str, Any]:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -84,8 +88,8 @@ class SpendManager:
             tenant = await db_session.get(Tenant, tenant_id)
             if not tenant:
                 return
-            bucket["daily_cap"] = float(tenant.daily_spend_cap_inr or 2500)
-            bucket["monthly_cap"] = float(tenant.monthly_spend_cap_inr or 50000)
+            daily_cap = float(tenant.daily_spend_cap_inr or 2500)
+            monthly_cap = float(tenant.monthly_spend_cap_inr or 50000)
             now = datetime.now(timezone.utc)
             day_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
             month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
@@ -95,8 +99,14 @@ class SpendManager:
             monthly_stmt = select(func.coalesce(func.sum(SpendLedger.cost_inr), 0.0)).where(
                 SpendLedger.tenant_id == tenant_id, SpendLedger.created_at >= month_start
             )
-            bucket["daily_spend"] = max(bucket["daily_spend"], float((await db_session.execute(daily_stmt)).scalar() or 0))
-            bucket["monthly_spend"] = max(bucket["monthly_spend"], float((await db_session.execute(monthly_stmt)).scalar() or 0))
+            daily_spend = float((await db_session.execute(daily_stmt)).scalar() or 0)
+            monthly_spend = float((await db_session.execute(monthly_stmt)).scalar() or 0)
+            with self._reservation_lock:
+                current_bucket = self._get_cache_bucket(tenant_id)
+                current_bucket["daily_cap"] = daily_cap
+                current_bucket["monthly_cap"] = monthly_cap
+                current_bucket["daily_spend"] = max(current_bucket["daily_spend"], daily_spend)
+                current_bucket["monthly_spend"] = max(current_bucket["monthly_spend"], monthly_spend)
 
         try:
             if session is not None:
@@ -107,34 +117,37 @@ class SpendManager:
         except Exception:
             # Keep the last known safe caps and spend values if storage is unavailable.
             logger.exception("Failed to refresh persisted spend limits for tenant %s", tenant_id)
-        effective_daily = bucket["daily_spend"] + bucket.get("in_flight", 0.0)
+        with self._reservation_lock:
+            bucket = self._get_cache_bucket(tenant_id)
+            effective_daily = bucket["daily_spend"] + bucket.get("in_flight", 0.0)
 
-        # 1. Check daily ceiling (₹2,500)
-        if effective_daily + reserve_inr >= bucket["daily_cap"]:
-            return True, f"Daily spend cap of ₹{bucket['daily_cap']:,.2f} reached (Current: ₹{bucket['daily_spend']:,.2f})."
+            # 1. Check daily ceiling (₹2,500)
+            if effective_daily + reserve_inr >= bucket["daily_cap"]:
+                return True, f"Daily spend cap of ₹{bucket['daily_cap']:,.2f} reached (Current: ₹{bucket['daily_spend']:,.2f})."
 
-        # 2. Check monthly ceiling 95% threshold (₹47,500 of ₹50,000)
-        monthly_threshold = bucket["monthly_cap"] * 0.95
-        effective_monthly = bucket["monthly_spend"] + bucket.get("in_flight", 0.0)
-        if effective_monthly + reserve_inr >= monthly_threshold:
-            return True, f"Monthly spend reached 95% threshold (Current: ₹{bucket['monthly_spend']:,.2f} / ₹{bucket['monthly_cap']:,.2f})."
+            # 2. Check monthly ceiling 95% threshold (₹47,500 of ₹50,000)
+            monthly_threshold = bucket["monthly_cap"] * 0.95
+            effective_monthly = bucket["monthly_spend"] + bucket.get("in_flight", 0.0)
+            if effective_monthly + reserve_inr >= monthly_threshold:
+                return True, f"Monthly spend reached 95% threshold (Current: ₹{bucket['monthly_spend']:,.2f} / ₹{bucket['monthly_cap']:,.2f})."
 
-        # Reserve estimated cost for in-flight model call to prevent concurrent burst over-cap leakage
-        bucket["in_flight"] = bucket.get("in_flight", 0.0) + reserve_inr
+            # Reserve estimated cost atomically before another turn can pass.
+            bucket["in_flight"] = bucket.get("in_flight", 0.0) + reserve_inr
 
-        # 3. Spend warning alert at 80% (₹40,000)
-        if bucket["monthly_spend"] >= (bucket["monthly_cap"] * 0.80):
-            alert_key = f"{tenant_id}:{bucket['month']}:80pct"
-            if alert_key not in self._alerted_80:
-                self._alerted_80.add(alert_key)
-                print(f"[ALERT: SPEND_WARNING_80_PERCENT] Tenant '{tenant_id}' monthly spend reached ₹{bucket['monthly_spend']:,.2f}")
+            # 3. Spend warning alert at 80% (₹40,000)
+            if bucket["monthly_spend"] >= (bucket["monthly_cap"] * 0.80):
+                alert_key = f"{tenant_id}:{bucket['month']}:80pct"
+                if alert_key not in self._alerted_80:
+                    self._alerted_80.add(alert_key)
+                    print(f"[ALERT: SPEND_WARNING_80_PERCENT] Tenant '{tenant_id}' monthly spend reached ₹{bucket['monthly_spend']:,.2f}")
 
-        return False, "Spend within limits"
+            return False, "Spend within limits"
 
     def release_reservation(self, tenant_id: str, reserved_inr: float = 15.0):
         """Releases reserved in-flight budget if model call was aborted or errored."""
-        bucket = self._get_cache_bucket(tenant_id)
-        bucket["in_flight"] = max(0.0, bucket.get("in_flight", 0.0) - reserved_inr)
+        with self._reservation_lock:
+            bucket = self._get_cache_bucket(tenant_id)
+            bucket["in_flight"] = max(0.0, bucket.get("in_flight", 0.0) - reserved_inr)
 
     async def record_spend(
         self,
@@ -152,10 +165,11 @@ class SpendManager:
         Releases in-flight reservation and applies actual computed INR cost.
         """
         cost_inr = compute_cost_inr(model, prompt_tokens, completion_tokens)
-        bucket = self._get_cache_bucket(tenant_id)
-        bucket["in_flight"] = max(0.0, bucket.get("in_flight", 0.0) - reserved_inr)
-        bucket["daily_spend"] += cost_inr
-        bucket["monthly_spend"] += cost_inr
+        with self._reservation_lock:
+            bucket = self._get_cache_bucket(tenant_id)
+            bucket["in_flight"] = max(0.0, bucket.get("in_flight", 0.0) - reserved_inr)
+            bucket["daily_spend"] += cost_inr
+            bucket["monthly_spend"] += cost_inr
 
         # Async DB persist
         async def _persist(s: AsyncSession):
@@ -182,9 +196,10 @@ class SpendManager:
 
     def set_mock_spend(self, tenant_id: str, daily: float, monthly: float):
         """Helper for testing budget thresholds."""
-        bucket = self._get_cache_bucket(tenant_id)
-        bucket["daily_spend"] = daily
-        bucket["monthly_spend"] = monthly
+        with self._reservation_lock:
+            bucket = self._get_cache_bucket(tenant_id)
+            bucket["daily_spend"] = daily
+            bucket["monthly_spend"] = monthly
 
 
 # Global singleton instance

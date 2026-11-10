@@ -18,6 +18,25 @@ from services.dashboard_api.dependencies import (
 router = APIRouter(prefix="/api/admin/v1/reports", tags=["reports"])
 
 
+@router.get("")
+async def get_dashboard_report(
+    staff: StaffSessionContext = Depends(require_roles("manager", "admin")),
+):
+    """Return the flattened report shape consumed by the dashboard page."""
+    spend = await get_spend_report(staff)
+    metrics = await get_performance_metrics(days=30, staff=staff)
+    return {
+        "spend_daily_inr": spend["daily"]["spent_inr"],
+        "spend_daily_cap_inr": spend["daily"]["cap_inr"],
+        "spend_monthly_inr": spend["monthly"]["spent_inr"],
+        "spend_monthly_cap_inr": spend["monthly"]["cap_inr"],
+        "deflection_rate": metrics["conversations"]["deflection_rate_pct"] / 100,
+        "cache_hit_rate": None,
+        "latency_p50_ms": metrics["latency_ms"]["p50"],
+        "latency_p95_ms": metrics["latency_ms"]["p95"],
+    }
+
+
 @router.get("/spend")
 async def get_spend_report(
     staff: StaffSessionContext = Depends(require_roles("manager", "admin")),
@@ -162,6 +181,32 @@ async def get_performance_metrics(
         total_cost = (await session.execute(stmt_cost)).scalar() or 0.0
         cost_per_conv = round(total_cost / total_convs, 2) if total_convs > 0 else 0.0
 
+        # 4. Top intents breakdown
+        stmt_intents = (
+            select(
+                ConversationTurn.intent,
+                func.count(ConversationTurn.turn_id).label("intent_count")
+            )
+            .where(
+                ConversationTurn.tenant_id == staff.tenant_id,
+                ConversationTurn.created_at >= since,
+                ConversationTurn.intent.isnot(None),
+            )
+            .group_by(ConversationTurn.intent)
+            .order_by(func.count(ConversationTurn.turn_id).desc())
+            .limit(10)
+        )
+        intent_rows = (await session.execute(stmt_intents)).all()
+        total_intents = sum(r[1] for r in intent_rows) or 1
+        top_intents = [
+            {
+                "intent": r[0] or "unknown",
+                "count": r[1],
+                "percentage": round((r[1] / total_intents) * 100, 1),
+            }
+            for r in intent_rows
+        ]
+
         return {
             "tenant_id": staff.tenant_id,
             "period_days": days,
@@ -179,5 +224,46 @@ async def get_performance_metrics(
             "financials": {
                 "total_spend_inr": round(total_cost, 2),
                 "cost_per_conversation_inr": cost_per_conv,
-            }
+            },
+            "top_intents": top_intents,
         }
+
+
+@router.get("/export.csv")
+async def export_reports_csv(
+    days: int = Query(30, ge=1, le=90),
+    staff: StaffSessionContext = Depends(require_roles("manager", "admin")),
+):
+    """Export performance, deflection, and financial metrics as a CSV document."""
+    from fastapi.responses import PlainTextResponse
+    import csv
+    import io
+
+    metrics = await get_performance_metrics(days=days, staff=staff)
+    spend = await get_spend_report(staff=staff)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Metric", "Value", "Unit / Notes"])
+    writer.writerow(["Tenant ID", staff.tenant_id, ""])
+    writer.writerow(["Period", f"Last {days} Days", ""])
+    writer.writerow(["Total Conversations", metrics["conversations"]["total"], "Sessions"])
+    writer.writerow(["Deflected Conversations", metrics["conversations"]["deflected"], "Resolved without escalation"])
+    writer.writerow(["Deflection Rate", f"{metrics['conversations']['deflection_rate_pct']}%", "Target >= 80%"])
+    writer.writerow(["Escalated Conversations", metrics["conversations"]["escalated"], "Handed to human staff"])
+    writer.writerow(["Latency p50", f"{metrics['latency_ms']['p50']} ms", "Median response time"])
+    writer.writerow(["Latency p95", f"{metrics['latency_ms']['p95']} ms", "95th percentile response time"])
+    writer.writerow(["Total Spend (INR)", f"₹{metrics['financials']['total_spend_inr']}", "All models"])
+    writer.writerow(["Cost per Conversation", f"₹{metrics['financials']['cost_per_conversation_inr']}", "Average"])
+    writer.writerow(["Today's Spend", f"₹{spend['daily']['spent_inr']}", f"Cap: ₹{spend['daily']['cap_inr']}"])
+    writer.writerow([])
+    writer.writerow(["Top Intents", "Turn Count", "Percentage"])
+    for ti in metrics.get("top_intents", []):
+        writer.writerow([ti["intent"], ti["count"], f"{ti['percentage']}%"])
+
+    csv_data = output.getvalue()
+    return PlainTextResponse(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=reports_export_{staff.tenant_id}_{days}d.csv"},
+    )

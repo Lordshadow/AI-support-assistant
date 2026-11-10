@@ -15,6 +15,7 @@ import {
 
 export const ReportsPage: React.FC = () => {
   const [days, setDays] = useState(30);
+  const [exportError, setExportError] = useState(false);
 
   // 1. Fetch performance & deflection metrics
   const { data: metrics, isLoading: metricsLoading, isError: metricsError, refetch: refetchMetrics } = useQuery({
@@ -43,13 +44,29 @@ export const ReportsPage: React.FC = () => {
   const monthlyPct = monthlySpend == null || !monthlyCap ? 0 : Math.min(100, Math.round((monthlySpend / monthlyCap) * 100));
 
   const deflectionRatePct = metrics?.conversations?.deflection_rate_pct;
+  const escalationRatePct = deflectionRatePct == null ? null : Math.round((100 - deflectionRatePct) * 10) / 10;
   const latencyP50 = metrics?.latency_ms?.p50;
   const latencyP95 = metrics?.latency_ms?.p95;
   const costPerConv = metrics?.financials?.cost_per_conversation_inr;
   const topIntents = metrics?.top_intents || [];
 
-  const handleExportCsv = () => {
-    window.open(`/api/admin/v1/reports/export.csv?days=${days}`, '_blank');
+  const handleExportCsv = async () => {
+    setExportError(false);
+    try {
+      const response = await api.get(`/api/admin/v1/reports/export.csv?days=${days}`, {
+        responseType: 'blob',
+      });
+      const downloadUrl = URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `support-report-${days}-days.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+    } catch {
+      setExportError(true);
+    }
   };
 
   return (
@@ -94,6 +111,13 @@ export const ReportsPage: React.FC = () => {
           <span>Some report data could not be loaded.</span>
           {metricsError && <Button size="sm" variant="secondary" onClick={() => refetchMetrics()}>Retry performance data</Button>}
           {spendError && <Button size="sm" variant="secondary" onClick={() => refetchSpend()}>Retry spend data</Button>}
+        </div>
+      )}
+
+      {exportError && (
+        <div role="alert" className="p-3 rounded-xl border border-[rgba(255,82,82,0.35)] bg-[rgba(255,82,82,0.1)] text-sm text-[#FF8585] flex flex-wrap items-center gap-3">
+          <span>CSV export failed. Check your access and try again.</span>
+          <Button size="sm" variant="secondary" onClick={handleExportCsv}>Retry export</Button>
         </div>
       )}
 
@@ -187,7 +211,7 @@ export const ReportsPage: React.FC = () => {
 
         <Card variant="dark" microCaption="ESCALATIONS" title="Escalation Rate">
           <span className="text-3xl font-extrabold font-mono text-[#FFA502] block mt-1">
-            {deflectionRatePct == null ? 'Unavailable' : `${100 - deflectionRatePct}%`}
+            {escalationRatePct == null ? 'Unavailable' : `${escalationRatePct}%`}
           </span>
           <span className="text-xs text-[#84ABA6] mt-2 block">
             Customer inquiries requiring human supervisor intervention.

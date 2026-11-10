@@ -5,11 +5,13 @@ Complies with Specification Section 6, 7.1, and 8.2 (Filtered RAG).
 
 from typing import Optional, List, Dict, Any
 from sqlalchemy import select, or_, and_
-from sqlalchemy.orm import selectinload
 
 from core.ports import CatalogPort
 from core.models import ProductMatch, ProductSpecs, PriceInfo, ProductSummary
-from db.models import ProductModel, ProductSpecModel, ProductPriceModel, KnowledgeChunk
+from db.models import (
+    ProductModel, ProductSpecModel, ProductPriceModel, KnowledgeChunk, KnowledgeVersion,
+    KnowledgeVersionChunk, Tenant,
+)
 from db.session import get_async_session
 
 
@@ -62,20 +64,30 @@ class PostgresCatalogRepository:
 
     async def get_details(self, product_id: str) -> Optional[ProductSpecs]:
         async with get_async_session(tenant_id=self.tenant_id) as session:
-            stmt = (
-                select(ProductModel)
-                .options(selectinload(ProductModel.specs))
-                .where(
-                    ProductModel.tenant_id == self.tenant_id,
-                    ProductModel.product_id == product_id,
-                )
+            active_catalog_id = await session.scalar(
+                select(Tenant.active_product_version).where(Tenant.tenant_id == self.tenant_id)
+            )
+            stmt = select(ProductModel).where(
+                ProductModel.tenant_id == self.tenant_id,
+                ProductModel.product_id == product_id,
             )
             result = await session.execute(stmt)
             p = result.scalars().first()
             if not p:
                 return None
 
-            specs_dict = {s.spec_key: s.spec_value for s in (p.specs or [])}
+            spec_stmt = select(ProductSpecModel).where(ProductSpecModel.product_id == product_id)
+            spec_stmt = spec_stmt.where(
+                ProductSpecModel.version_id == active_catalog_id if active_catalog_id
+                else ProductSpecModel.version_id.is_(None)
+            )
+            specs = (await session.execute(spec_stmt)).scalars().all()
+            if not specs:
+                # Older catalog versions predate versioned product_specs or reside in earlier version.
+                specs = (await session.execute(select(ProductSpecModel).where(
+                    ProductSpecModel.product_id == product_id
+                ))).scalars().all()
+            specs_dict = {s.spec_key: s.spec_value for s in specs}
             aliases_list = p.aliases if isinstance(p.aliases, list) else []
             return ProductSpecs(
                 product_id=p.product_id,
@@ -145,12 +157,33 @@ class PostgresCatalogRepository:
             return summaries
 
     async def search_product_docs(self, product_id: str, query: str) -> List[str]:
-        """Filtered RAG on btree index (tenant_id, product_id)."""
+        """Vector-rank documentation with tenant, active-version, and product filters."""
         async with get_async_session(tenant_id=self.tenant_id) as session:
+            active_catalog_id = await session.scalar(
+                select(Tenant.active_product_version).where(Tenant.tenant_id == self.tenant_id)
+            )
             stmt = select(KnowledgeChunk).where(
                 KnowledgeChunk.tenant_id == self.tenant_id,
                 KnowledgeChunk.product_id == product_id,
+                KnowledgeChunk.source_type == "catalog",
             )
+            if active_catalog_id:
+                stmt = stmt.join(
+                    KnowledgeVersionChunk,
+                    KnowledgeVersionChunk.chunk_id == KnowledgeChunk.chunk_id,
+                ).where(KnowledgeVersionChunk.version_id == active_catalog_id)
+                version = await session.get(KnowledgeVersion, active_catalog_id)
+                expected_model = (version.manifest or {}).get("embedding_model") if version else None
+                if query.strip():
+                    from ingestion.manifest_engine import _catalog_embedder
+                    embedder = _catalog_embedder()
+                    actual_model = getattr(embedder, "model", None)
+                    if expected_model and actual_model != expected_model:
+                        raise RuntimeError("Active catalog embedding model is unavailable or mismatched.")
+                    query_vector = await embedder.embed_query(query)
+                    if len(query_vector) != 1024:
+                        raise RuntimeError("Query embedder returned an invalid vector dimension.")
+                    stmt = stmt.order_by(KnowledgeChunk.embedding.cosine_distance(query_vector)).limit(10)
             result = await session.execute(stmt)
             chunks = result.scalars().all()
             return [c.text for c in chunks]

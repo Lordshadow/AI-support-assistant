@@ -53,8 +53,30 @@ class MCPToolDispatcher:
         start_time = time.perf_counter()
         token = mint_internal_token(ctx)
 
+        page_context = ctx.page_context
+        if page_context and page_context.page_type == "product_details":
+            expected = page_context.product_id
+            requested = args.get("product_id")
+            if expected and requested and str(requested).upper() != expected:
+                result = {"error": "CONTEXT_MISMATCH", "hint": "The requested product is not the product currently displayed."}
+                return self._record_trace(tool_name, args, result, start_time, ctx)
+        if page_context and page_context.page_type == "order_details":
+            expected = page_context.order_id
+            requested = args.get("order_id")
+            if expected and requested and str(requested).upper() != expected:
+                result = {"error": "CONTEXT_MISMATCH", "hint": "The requested order is not the order currently displayed."}
+                return self._record_trace(tool_name, args, result, start_time, ctx)
+
         # 1. Route to Catalog Server
-        if tool_name == "find_product":
+        if tool_name == "get_current_page_context":
+            result = {
+                "page_type": page_context.page_type if page_context else "other",
+                "url": page_context.url if page_context else None,
+                "product_id": page_context.product_id if page_context else None,
+                "order_id": page_context.order_id if page_context else None,
+                "cart_id": page_context.cart_id if page_context else None,
+            }
+        elif tool_name == "find_product":
             result = await self.catalog.find_product(args.get("name_text", ""))
         elif tool_name == "get_product_price":
             result = await self.catalog.get_product_price(args.get("product_id", ""))
@@ -100,14 +122,23 @@ class MCPToolDispatcher:
             result = await self.handoff.handoff_to_human(
                 reason=args.get("reason", "General escalation"),
                 summary=args.get("summary", ""),
-                conv_id=ctx.conv_id
+                conv_id=ctx.conv_id,
+                customer_id=ctx.customer_id,
+                channel=ctx.channel,
             )
         else:
             result = {"error": f"Unknown tool: '{tool_name}'"}
 
         latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-        # Record Execution Trace for R5 Explainability
+        return self._record_trace(tool_name, args, result, start_time, ctx)
+
+    def _record_trace(
+        self, tool_name: str, args: dict[str, Any], result: dict[str, Any],
+        start_time: float, ctx: SessionContext
+    ) -> dict[str, Any]:
+        """Record bounded tool outcome for explainability."""
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
         trace_record = {
             "conv_id": ctx.conv_id,
             "tool_name": tool_name,
@@ -117,5 +148,4 @@ class MCPToolDispatcher:
             "auth_level": ctx.level.value
         }
         self.traces.append(trace_record)
-
         return result

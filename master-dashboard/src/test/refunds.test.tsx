@@ -24,7 +24,10 @@ const mockRefunds = [
     reason: 'Damaged packaging during transit',
     state: 'pending_approval',
     created_at: new Date().toISOString(),
-    customer_trust_level: 'verified',
+    customer_trust_level: 'unknown',
+    eligibility_snapshot: { eligible: true, max_amount: '2500' },
+    policy_version_applied: 'policy-2026-04',
+    checks: [{ name: 'Refund eligibility at request time', passed: true, details: 'Eligibility decision recorded.' }],
     requested_by: 'staff_different',
   },
   {
@@ -36,7 +39,7 @@ const mockRefunds = [
     state: 'pending_approval',
     created_at: new Date().toISOString(),
     customer_trust_level: 'verified',
-    requested_by: 'staff_001', // Self requested
+    requested_by: null,
   },
 ];
 
@@ -59,6 +62,7 @@ describe('RefundsPage Approval Queue (Spec 16.4 Screen 2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (api.get as any).mockResolvedValue({ data: mockRefunds });
+    (api.post as any).mockResolvedValue({ data: { success: true, state: 'approved' } });
   });
 
   it('renders pending refunds list and detail card', async () => {
@@ -82,7 +86,32 @@ describe('RefundsPage Approval Queue (Spec 16.4 Screen 2)', () => {
     ).toBeInTheDocument();
   });
 
-  it('blocks self-approval when refund was requested by same staff', async () => {
+  it('submits an approval to the API and confirms the recorded decision', async () => {
+    sessionStorage.setItem('novaretail_staff_meta', JSON.stringify({
+      staffId: 'manager_1', email: 'manager@example.test', fullName: 'Manager', role: 'manager', tenantId: 'tenant_novaretail',
+    }));
+    renderRefunds();
+    await waitFor(() => expect(screen.getAllByText(/REF-001/).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole('button', { name: /Approve Refund/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Approval' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/admin/v1/refunds/REF-001/approve', { notes: '' }));
+    expect(await screen.findByText('Refund #REF-001 was successfully approved.')).toBeInTheDocument();
+  });
+
+  it('submits a rejection with the required audit note', async () => {
+    sessionStorage.setItem('novaretail_staff_meta', JSON.stringify({
+      staffId: 'manager_1', email: 'manager@example.test', fullName: 'Manager', role: 'manager', tenantId: 'tenant_novaretail',
+    }));
+    renderRefunds();
+    await waitFor(() => expect(screen.getAllByText(/REF-001/).length).toBeGreaterThan(0));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Reviewed item and return reason.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reject Refund' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Rejection' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/admin/v1/refunds/REF-001/reject', { notes: 'Reviewed item and return reason.' }));
+    expect(await screen.findByText('Refund #REF-001 was successfully rejected.')).toBeInTheDocument();
+  });
+
+  it('shows only stored eligibility and verification facts in the detail view', async () => {
     // Set active staff to staff_001 in session storage
     sessionStorage.setItem(
       'novaretail_staff_meta',
@@ -100,12 +129,13 @@ describe('RefundsPage Approval Queue (Spec 16.4 Screen 2)', () => {
       expect(screen.getByText(/REF-002/)).toBeInTheDocument();
     });
 
-    // Select self-requested refund REF-002
-    fireEvent.click(screen.getByText(/REF-002/));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Spec 15.1.8 Enforcement: You cannot approve this refund/i)).toBeInTheDocument();
-    });
+    fireEvent.click(screen.getAllByText(/REF-001/)[0]);
+    expect(await screen.findByText('Refund eligibility at request time')).toBeInTheDocument();
+    expect(screen.getByText('Eligibility decision recorded.')).toBeInTheDocument();
+    expect(screen.getByText('Customer Trust Level: unknown')).toBeInTheDocument();
+    expect(screen.getByText('Identity verification evidence was not recorded for this request.')).toBeInTheDocument();
+    expect(screen.queryByText(/Passed \(14 days elapsed\)/)).not.toBeInTheDocument();
+    expect(screen.getByText('Policy version: policy-2026-04')).toBeInTheDocument();
   });
 
   it('blocks Support Executive from approving refunds exceeding ₹5,000 threshold', async () => {

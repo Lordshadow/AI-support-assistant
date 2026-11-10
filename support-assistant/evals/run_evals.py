@@ -33,7 +33,7 @@ def simulate_orchestrator(scenario: dict) -> dict:
         intent = "adversarial_injection"
     elif "refund" in msg.lower():
         intent = "refund_request"
-    elif any(kw in msg.lower() for kw in ["order", "status", "deliver", "ஆர்டர்"]) or re.search(r"ORD-\d+", msg, re.I):
+    elif any(kw in msg.lower() for kw in ["order", "status", "deliver", "ஆர்டர்"]) or re.search(r"\bORD(?:[-_][A-Za-z0-9]+|\d+)(?:[-_][A-Za-z0-9]+)*\b", msg, re.I):
         intent = "order_status"
     elif "human" in msg.lower() or "manager" in msg.lower():
         intent = "human_handoff"

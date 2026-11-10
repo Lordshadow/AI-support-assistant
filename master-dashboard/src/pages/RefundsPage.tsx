@@ -35,13 +35,15 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
   const [confirmAction, setConfirmAction] = useState<'approved' | 'rejected' | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+  const [view, setView] = useState<'pending' | 'history'>('pending');
 
   // 1. Fetch pending refunds
   const searchRefundId = searchParams.get('refund_id') || '';
   const { data: refunds = [], isLoading, isError: refundsError, refetch } = useQuery<RefundItem[]>({
-    queryKey: ['pendingRefunds', searchRefundId],
+    queryKey: ['refunds', view, searchRefundId],
     queryFn: async () => {
-      const resp = await api.get('/api/admin/v1/refunds/pending', { params: searchRefundId ? { refund_id: searchRefundId } : undefined });
+      const endpoint = view === 'pending' ? 'pending' : 'history';
+      const resp = await api.get(`/api/admin/v1/refunds/${endpoint}`, { params: view === 'pending' && searchRefundId ? { refund_id: searchRefundId } : undefined });
       const data = resp.data || [];
       // Select first item by default if none selected
       if (data.length > 0 && !selectedRefund) {
@@ -53,9 +55,7 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
   });
 
   // Keep selected refund in sync with list
-  const activeRefund = selectedRefund
-    ? refunds.find((r) => r.refund_id === selectedRefund.refund_id) || selectedRefund
-    : refunds[0] || null;
+  const activeRefund = (selectedRefund ? refunds.find((r) => r.refund_id === selectedRefund.refund_id) : null) || refunds[0] || null;
 
   useEffect(() => {
     const selectedId = searchParams.get('refund_id');
@@ -66,7 +66,6 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
   }, [refunds, searchParams]);
 
   // Check self-approval: staff cannot approve a refund they requested themselves (Spec 15.1.8 [ASSUMPTION])
-  const isSelfRequested = !!activeRefund?.requested_by && activeRefund.requested_by === staff?.staffId;
 
   // Check executive limit: Support Executives can only approve refunds <= ₹5,000 (Spec 16.4)
   const isAboveExecutiveLimit = !!activeRefund && activeRefund.amount_inr > 5000 && staff?.role === 'executive';
@@ -88,11 +87,14 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
       });
       return resp.data;
     },
-    onSuccess: (_, variables) => {
-      setActionSuccessMsg(`Refund #${variables.refundId} was successfully ${variables.decision}.`);
+    onSuccess: (data, variables) => {
+      const amount = Number(data.amount_inr);
+      const amountText = Number.isFinite(amount) ? ` Store refund #${data.store_refund_id} for ₹${amount.toLocaleString('en-IN')} was processed.` : '';
+      const modeText = data.test_mode && data.money_moved === false ? ' Test mode confirmed; no money moved.' : '';
+      setActionSuccessMsg(`Refund #${variables.refundId} was synchronized.${amountText}${modeText}`);
       setStaffNote('');
       setConfirmAction(null);
-      queryClient.invalidateQueries({ queryKey: ['pendingRefunds'] });
+      queryClient.invalidateQueries({ queryKey: ['refunds'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardReport'] });
     },
     onError: (err: any) => {
@@ -111,10 +113,6 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
       return;
     }
 
-    if (decision === 'approved' && isSelfRequested) {
-      setErrorMsg('Policy Violation (Spec 15.1.8): Staff members cannot approve their own refund requests.');
-      return;
-    }
 
     if (decision === 'approved' && isAboveExecutiveLimit) {
       setErrorMsg('Policy Violation (Spec 16.4): Refunds exceeding ₹5,000 require Manager or Admin supervisory approval.');
@@ -150,7 +148,7 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
             Refund Approval Queue
           </h1>
           <p className="text-sm text-[#B6D5D1] mt-1">
-            Review refunds exceeding the automated auto-limit (₹2,000) with order details and verification checks.
+            Review refunds over ₹2,000 and track decisions synchronized with the ApexStore admin panel.
           </p>
         </div>
 
@@ -161,6 +159,15 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
           leftIcon={<Clock className="w-3.5 h-3.5" />}
         >
           Refresh Queue
+        </Button>
+      </div>
+
+      <div className="flex gap-2" role="tablist" aria-label="Refund views">
+        <Button size="sm" variant={view === 'pending' ? 'primary' : 'secondary'} onClick={() => { setView('pending'); setSelectedRefund(null); setConfirmAction(null); }}>
+          Pending approvals
+        </Button>
+        <Button size="sm" variant={view === 'history' ? 'primary' : 'secondary'} onClick={() => { setView('history'); setSelectedRefund(null); setConfirmAction(null); }}>
+          Refund history
         </Button>
       </div>
 
@@ -186,8 +193,8 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
       ) : refunds.length === 0 ? (
         <EmptyState
           variant="cleared"
-          title="Approval Queue Cleared"
-          description="There are currently no refund requests requiring manual staff executive sign-off. All customer requests within the auto-limit were resolved automatically."
+          title={view === 'pending' ? 'Approval Queue Cleared' : 'No refund history yet'}
+          description={view === 'pending' ? 'There are no refund requests waiting for staff approval.' : 'Approved, rejected, and processed refunds will appear here.'}
           actionLabel="Check Again"
           onAction={() => refetch()}
         />
@@ -197,7 +204,7 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
           <div className="lg:col-span-5 space-y-3">
             <div className="flex items-center justify-between px-2">
               <span className="text-xs font-bold uppercase tracking-wider text-[#84ABA6]">
-                Pending Requests ({refunds.length})
+                {view === 'pending' ? 'Pending Requests' : 'Refund History'} ({refunds.length})
               </span>
               <span className="text-xs text-[#3FD2C0]">Sorted by SLA</span>
             </div>
@@ -234,7 +241,7 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
                       <span>Order #{refund.order_id}</span>
                       <span className="flex items-center gap-1 font-mono text-[11px] text-[#FFA502]">
                         <Clock className="w-3 h-3" />
-                        {waitMin}m waiting
+                        {view === 'pending' ? `${waitMin}m waiting` : refund.state.replaceAll('_', ' ')}
                       </span>
                     </div>
 
@@ -244,13 +251,11 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
 
                     <div className="mt-3 pt-2.5 border-t border-[rgba(63,210,192,0.12)] flex items-center justify-between">
                       <StatusBadge
-                        status={refund.amount_inr > 5000 ? 'warning' : 'info'}
-                        label={refund.amount_inr > 5000 ? 'High Value (> ₹5k)' : 'Standard Review'}
+                        status={view === 'pending' ? (refund.amount_inr > 5000 ? 'warning' : 'info') : (refund.state === 'processed' || refund.state === 'completed' ? 'success' : refund.state === 'rejected' ? 'danger' : 'neutral')}
+                        label={view === 'pending' ? (refund.amount_inr > 5000 ? 'High Value (> ₹5k)' : 'Standard Review') : refund.state.replaceAll('_', ' ')}
                         size="sm"
                       />
-                      <span className="text-[11px] text-[#3FD2C0] flex items-center gap-1">
-                        Inspect <ArrowRight className="w-3 h-3" />
-                      </span>
+                      {view === 'pending' && <span className="text-[11px] text-[#3FD2C0] flex items-center gap-1">Inspect <ArrowRight className="w-3 h-3" /></span>}
                     </div>
                   </div>
                 );
@@ -300,22 +305,15 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
                   </div>
                 </div>
 
-                {/* Customer Trust & Verification Level (Spec 15.1.1) */}
                 <div className="p-4 rounded-2xl bg-[rgba(11,74,71,0.5)] border border-[rgba(63,210,192,0.2)] flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-[rgba(46,213,115,0.2)] border border-[rgba(46,213,115,0.4)] flex items-center justify-center text-[#2ED573]">
-                      <ShieldCheck className="w-5 h-5" />
-                    </div>
+                    <ShieldCheck className="w-5 h-5 text-[#84ABA6]" />
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-[#EAF6F4]">
-                        Customer Trust Level: Verified
-                      </p>
-                      <p className="text-xs text-[#B6D5D1]">
-                        Spec 15.1.1: Customer identity verified via registered phone OTP.
-                      </p>
+                      <p className="text-xs font-bold uppercase tracking-wider text-[#EAF6F4]">Customer Trust Level: {activeRefund.customer_trust_level || 'unknown'}</p>
+                      <p className="text-xs text-[#B6D5D1]">{activeRefund.customer_trust_level === 'verified' ? 'Verified identity is recorded for this request.' : 'Identity verification evidence was not recorded for this request.'}</p>
                     </div>
                   </div>
-                  <StatusBadge status="success" label="Verified OTP" size="sm" />
+                  <StatusBadge status={activeRefund.customer_trust_level === 'verified' ? 'success' : 'neutral'} label={activeRefund.customer_trust_level === 'verified' ? 'Verified' : 'Unavailable'} size="sm" />
                 </div>
 
                 {/* Assistant Automated Checks Checklist */}
@@ -324,30 +322,22 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
                     Assistant Pre-Approval Checks
                   </h3>
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-[rgba(6,47,46,0.6)] border border-[rgba(63,210,192,0.15)] text-xs">
-                      <div className="flex items-center gap-2.5">
-                        <CheckCircle2 className="w-4 h-4 text-[#2ED573]" />
-                        <span className="text-[#EAF6F4]">Return Window Policy (30 Days)</span>
+                    {activeRefund.checks?.length ? activeRefund.checks.map((check) => (
+                      <div key={check.name} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[rgba(6,47,46,0.6)] border border-[rgba(63,210,192,0.15)] text-xs">
+                        <div className="flex items-center gap-2.5">
+                          {check.passed ? <CheckCircle2 className="w-4 h-4 text-[#2ED573]" /> : <AlertTriangle className="w-4 h-4 text-[#FFA502]" />}
+                          <span className="text-[#EAF6F4]">{check.name}</span>
+                        </div>
+                        <span className={`font-semibold ${check.passed ? 'text-[#2ED573]' : 'text-[#FFA502]'}`}>{check.details || (check.passed ? 'Passed' : 'Not passed')}</span>
                       </div>
-                      <span className="font-semibold text-[#2ED573]">Passed (14 days elapsed)</span>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-[rgba(6,47,46,0.6)] border border-[rgba(63,210,192,0.15)] text-xs">
-                      <div className="flex items-center gap-2.5">
-                        <CheckCircle2 className="w-4 h-4 text-[#2ED573]" />
-                        <span className="text-[#EAF6F4]">Non-Excluded Category Check</span>
-                      </div>
-                      <span className="font-semibold text-[#2ED573]">Eligible (Apparel / Electronics)</span>
-                    </div>
-
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-[rgba(6,47,46,0.6)] border border-[rgba(63,210,192,0.15)] text-xs">
-                      <div className="flex items-center gap-2.5">
-                        <CheckCircle2 className="w-4 h-4 text-[#2ED573]" />
-                        <span className="text-[#EAF6F4]">Photo Evidence & Return Reason</span>
-                      </div>
-                      <span className="font-semibold text-[#2ED573]">Validated by Assistant</span>
-                    </div>
+                    )) : <p className="text-xs text-[#B6D5D1] p-3 rounded-xl bg-[rgba(6,47,46,0.6)]">No eligibility check details were stored for this request.</p>}
+                    {activeRefund.policy_version_applied && <p className="text-[11px] text-[#84ABA6]">Policy version: {activeRefund.policy_version_applied}</p>}
                   </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-[#84ABA6] mb-2">Order items</h3>
+                  {activeRefund.order_items?.length ? <ul className="space-y-1 text-xs text-[#B6D5D1]">{activeRefund.order_items.map((item) => <li key={item.item_id}>{item.title} × {item.quantity} · ₹{item.price_inr.toLocaleString('en-IN')} {item.returnable ? '(returnable)' : '(not returnable)'}</li>)}</ul> : <p className="text-xs text-[#B6D5D1]">Order item details are unavailable for this request.</p>}
                 </div>
 
                 {/* Customer Stated Reason */}
@@ -360,16 +350,6 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
                   </div>
                 </div>
 
-                {/* Self-Approval Warning (Spec 15.1.8 [ASSUMPTION]) */}
-                {isSelfRequested && (
-                  <div className="p-3.5 rounded-xl bg-[rgba(255,165,2,0.15)] border border-[rgba(255,165,2,0.4)] text-[#FFA502] text-xs flex items-center gap-3">
-                    <AlertTriangle className="w-5 h-5 shrink-0" />
-                    <span>
-                      Spec 15.1.8 Enforcement: You cannot approve this refund because it was initiated by your staff account. Another executive or manager must review it.
-                    </span>
-                  </div>
-                )}
-
                 {/* Executive > ₹5,000 Limit Warning (Spec 16.4) */}
                 {isAboveExecutiveLimit && (
                   <div className="p-3.5 rounded-xl bg-[rgba(255,165,2,0.15)] border border-[rgba(255,165,2,0.4)] text-[#FFA502] text-xs flex items-center gap-3">
@@ -380,8 +360,16 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
                   </div>
                 )}
 
+                {view === 'history' && (
+                  <div className="p-3 rounded-xl bg-[rgba(6,47,46,0.6)] border border-[rgba(63,210,192,0.15)] text-sm text-[#B6D5D1]">
+                    Final state: <span className="font-semibold text-[#EAF6F4]">{activeRefund.state.replaceAll('_', ' ')}</span>
+                    {activeRefund.decided_at ? ` · ${new Date(activeRefund.decided_at).toLocaleString()}` : ''}
+                    {activeRefund.staff_note ? <p className="mt-2">{activeRefund.staff_note}</p> : null}
+                  </div>
+                )}
+
                 {/* Mandatory Staff Audit Note */}
-                <div>
+                {view === 'pending' && <div>
                   <label className="block text-xs font-bold uppercase tracking-widest text-[#B6D5D1] mb-1.5">
                     Staff Audit Note (Required for Rejection)
                   </label>
@@ -392,10 +380,10 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
                     placeholder="Document your review rationale or reason for decision. This will be recorded in audit_events."
                     className="w-full p-3 rounded-xl bg-[rgba(11,74,71,0.5)] border border-[rgba(63,210,192,0.25)] text-[#EAF6F4] placeholder-[#84ABA6] focus:border-[#3FD2C0] focus:ring-1 focus:ring-[#3FD2C0] outline-none text-sm resize-none"
                   />
-                </div>
+                </div>}
 
                 {/* Action Buttons */}
-                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[rgba(63,210,192,0.15)]">
+                {view === 'pending' && <div className="flex items-center justify-end gap-3 pt-3 border-t border-[rgba(63,210,192,0.15)]">
                   <Button
                     variant="danger"
                     size="md"
@@ -409,14 +397,14 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
                   <Button
                     variant="primary"
                     size="md"
-                    disabled={isSelfRequested || isAboveExecutiveLimit}
+                    disabled={isAboveExecutiveLimit}
                     onClick={() => handleActionClick('approved')}
                     isLoading={decisionMutation.isPending && confirmAction === 'approved'}
                     leftIcon={<CheckCircle2 className="w-4 h-4" />}
                   >
-                    {isAboveExecutiveLimit ? 'Requires Manager Sign-Off (> ₹5,000)' : `Approve Refund (₹${activeRefund.amount_inr.toLocaleString('en-IN')})`}
+                    {isAboveExecutiveLimit ? 'Requires Manager Sign-Off (> ₹5,000)' : 'Approve and process matched store refund'}
                   </Button>
-                </div>
+                </div>}
               </Panel>
             </div>
           )}
@@ -425,13 +413,13 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
 
       {/* Confirmation Dialog before action */}
       <ConfirmDialog
-        isOpen={!!confirmAction}
+        isOpen={view === 'pending' && !!confirmAction}
         onClose={() => setConfirmAction(null)}
         onConfirm={executeConfirmedDecision}
         title={confirmAction === 'approved' ? 'Confirm Refund Approval' : 'Confirm Refund Rejection'}
         message={
           confirmAction === 'approved'
-            ? `Are you sure you want to approve refund #${activeRefund?.refund_id} for ₹${activeRefund?.amount_inr.toLocaleString('en-IN')}? This will immediately trigger the payment refund via the company adapter.`
+            ? `Approve refund #${activeRefund?.refund_id} and process the unique pending refund in ApexStore using the storefront amount. The payment provider result will determine the final state.`
             : `Are you sure you want to reject refund #${activeRefund?.refund_id}? Note recorded: "${staffNote || 'None'}"`
         }
         confirmLabel={confirmAction === 'approved' ? 'Confirm Approval' : 'Confirm Rejection'}

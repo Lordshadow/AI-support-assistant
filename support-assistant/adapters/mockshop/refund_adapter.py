@@ -29,7 +29,8 @@ class MockRefundAdapter:
         self,
         customer_id: str,
         order_id: str,
-        item_id: Optional[str] = None
+        item_id: Optional[str] = None,
+        customer_token: Optional[str] = None,
     ) -> tuple[bool, str, int]:
         order = await self._order_adapter.get_order(customer_id, order_id)
         if not order:
@@ -43,7 +44,8 @@ class MockRefundAdapter:
         order_id: str,
         amount_inr: int,
         reason: str,
-        idempotency_key: str
+        idempotency_key: str,
+        customer_token: Optional[str] = None,
     ) -> RefundResult:
         # 1. Idempotency Check: prevent duplicate processing on retries
         if idempotency_key in self._idempotency_index:

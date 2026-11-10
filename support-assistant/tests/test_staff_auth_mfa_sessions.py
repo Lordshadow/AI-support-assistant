@@ -5,6 +5,7 @@ Complies with Specification Section 15.1.8.
 
 import unittest
 import asyncio
+import hashlib
 from datetime import datetime, timezone, timedelta
 import secrets
 from pathlib import Path
@@ -296,6 +297,108 @@ class TestStaffAuthAndSessions(unittest.TestCase):
         )
         self.assertEqual(res_mgr_stepup.status_code, 200)
         self.assertEqual(res_mgr_stepup.json()["status"], "policy_updated")
+
+    def test_admin_staff_provisioning(self):
+        """Verify Admin can create and list executives/managers, and non-admins are blocked."""
+        now = datetime.now(timezone.utc)
+        csrf = secrets.token_hex(16)
+        csrf_hash = hashlib.sha256(csrf.encode("utf-8")).hexdigest()
+
+        # Seed admin and manager sessions
+        async def seed_users():
+            async with self.session_maker() as session:
+                async with session.begin():
+                    session.add(Tenant(tenant_id="demo-shop", name="Demo Shop"))
+                    session.add_all([
+                        StaffUser(
+                            staff_id="adm_01",
+                            email="admin@novaretail.com",
+                            full_name="Admin",
+                            password_hash=hash_password("Pass123!"),
+                            created_at=now
+                        ),
+                        StaffUser(
+                            staff_id="mgr_01",
+                            email="manager@novaretail.com",
+                            full_name="Manager",
+                            password_hash=hash_password("Pass123!"),
+                            created_at=now
+                        ),
+                        StaffTenantMembership(id="m_adm", staff_id="adm_01", tenant_id="demo-shop", role="admin"),
+                        StaffTenantMembership(id="m_mgr", staff_id="mgr_01", tenant_id="demo-shop", role="manager"),
+                        StaffSession(
+                            session_id="sess_adm",
+                            staff_id="adm_01",
+                            tenant_id="demo-shop",
+                            active_tenant_id="demo-shop",
+                            csrf_hash=csrf_hash,
+                            expires_at=now + timedelta(hours=8)
+                        ),
+                        StaffSession(
+                            session_id="sess_mgr",
+                            staff_id="mgr_01",
+                            tenant_id="demo-shop",
+                            active_tenant_id="demo-shop",
+                            csrf_hash=csrf_hash,
+                            expires_at=now + timedelta(hours=8)
+                        ),
+                    ])
+        run_async(seed_users())
+
+        # 1. Non-admin (manager) blocked from listing or creating staff
+        res_mgr_list = self.client.get(
+            "/api/admin/v1/auth/staff",
+            cookies={"session_id": "sess_mgr"}
+        )
+        self.assertEqual(res_mgr_list.status_code, 403)
+
+        res_mgr_create = self.client.post(
+            "/api/admin/v1/auth/staff",
+            cookies={"session_id": "sess_mgr"},
+            headers={"X-CSRF-Token": csrf},
+            json={"email": "newexec@novaretail.com", "password": "Password123!", "full_name": "New Exec", "role": "executive"}
+        )
+        self.assertEqual(res_mgr_create.status_code, 403)
+
+        # 2. Admin creates a new executive
+        res_create_exec = self.client.post(
+            "/api/admin/v1/auth/staff",
+            cookies={"session_id": "sess_adm"},
+            headers={"X-CSRF-Token": csrf},
+            json={"email": "newexec@novaretail.com", "password": "Password123!", "full_name": "New Exec", "role": "executive"}
+        )
+        self.assertEqual(res_create_exec.status_code, 200)
+        self.assertEqual(res_create_exec.json()["status"], "created")
+        self.assertEqual(res_create_exec.json()["role"], "executive")
+
+        # 3. Duplicate email rejected with 409
+        res_dup = self.client.post(
+            "/api/admin/v1/auth/staff",
+            cookies={"session_id": "sess_adm"},
+            headers={"X-CSRF-Token": csrf},
+            json={"email": "newexec@novaretail.com", "password": "Password123!", "full_name": "New Exec", "role": "executive"}
+        )
+        self.assertEqual(res_dup.status_code, 409)
+
+        # 4. Invalid role rejected with 400
+        res_inv = self.client.post(
+            "/api/admin/v1/auth/staff",
+            cookies={"session_id": "sess_adm"},
+            headers={"X-CSRF-Token": csrf},
+            json={"email": "invalid@novaretail.com", "password": "Password123!", "full_name": "Invalid", "role": "superman"}
+        )
+        self.assertEqual(res_inv.status_code, 400)
+
+        # 5. Admin lists staff members
+        res_list = self.client.get(
+            "/api/admin/v1/auth/staff",
+            cookies={"session_id": "sess_adm"}
+        )
+        self.assertEqual(res_list.status_code, 200)
+        emails = [s["email"] for s in res_list.json()]
+        self.assertIn("newexec@novaretail.com", emails)
+        self.assertIn("admin@novaretail.com", emails)
+
 
 
 if __name__ == "__main__":

@@ -19,6 +19,14 @@ class SessionContext:
 
 # OpenAI/Groq compatible Function Calling Schema exposed to the LLM
 MCP_TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_page_context",
+            "description": "Read the validated page and entity context supplied by the active website session.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
     # -------------------------------------------------------------
     # 1. CATALOG SERVER (Read-Only)
     # -------------------------------------------------------------

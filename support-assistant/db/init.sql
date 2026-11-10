@@ -115,8 +115,7 @@ CREATE TABLE IF NOT EXISTS order_items (
     price NUMERIC(12, 2) NOT NULL,
     quantity INT DEFAULT 1,
     is_digital BOOLEAN DEFAULT FALSE,
-    is_refunded BOOLEAN DEFAULT FALSE,
-    refund_eligibility_verified BOOLEAN DEFAULT TRUE NOT NULL
+    is_refunded BOOLEAN DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 

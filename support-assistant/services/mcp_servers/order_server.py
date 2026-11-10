@@ -27,7 +27,10 @@ class MCPOrderServer:
                 "message": "You must be logged in to check order status."
             }
 
-        order = await self.orders.get_order(ctx.customer_id, order_id)
+        if ctx.storefront_customer_token:
+            order = await self.orders.get_order(ctx.customer_id, order_id, customer_token=ctx.storefront_customer_token)
+        else:
+            order = await self.orders.get_order(ctx.customer_id, order_id)
         if not order:
             return {
                 "found": False,
@@ -38,13 +41,14 @@ class MCPOrderServer:
             "found": True,
             "order_id": order.order_id,
             "status": order.status.value,
-            "total_amount_inr": order.total_amount_inr,
+            # Preserve exact currency precision and keep tool results JSON-safe.
+            "total_amount_inr": str(order.total_amount_inr),
             "items": [
                 {
                     "item_id": i.item_id,
                     "name": i.product_name,
                     "quantity": i.quantity,
-                    "price": i.price
+                    "price": str(i.price)
                 }
                 for i in order.items
             ],
@@ -64,14 +68,19 @@ class MCPOrderServer:
                 "message": "Please log in to view your recent orders."
             }
 
-        orders = await self.orders.list_recent_orders(ctx.customer_id, limit=limit)
+        if ctx.storefront_customer_token:
+            orders = await self.orders.list_recent_orders(ctx.customer_id, limit=limit, customer_token=ctx.storefront_customer_token)
+        else:
+            orders = await self.orders.list_recent_orders(ctx.customer_id, limit=limit)
         return {
             "count": len(orders),
             "orders": [
                 {
                     "order_id": o.order_id,
                     "status": o.status.value,
-                    "total_amount_inr": o.total_amount_inr,
+                    # SQLAlchemy Numeric values are Decimal and plain json.dumps
+                    # in the orchestrator cannot serialize them.
+                    "total_amount_inr": str(o.total_amount_inr),
                     "item_names": [i.product_name for i in o.items],
                     "created_at": o.created_at.strftime("%Y-%m-%d")
                 }
@@ -89,7 +98,10 @@ class MCPOrderServer:
                 "message": "Please log in to track your order."
             }
 
-        events = await self.orders.get_tracking(ctx.customer_id, order_id)
+        if ctx.storefront_customer_token:
+            events = await self.orders.get_tracking(ctx.customer_id, order_id, customer_token=ctx.storefront_customer_token)
+        else:
+            events = await self.orders.get_tracking(ctx.customer_id, order_id)
         if not events:
             return {"found": False, "message": f"No tracking events found for order '{order_id}'."}
 

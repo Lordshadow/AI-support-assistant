@@ -9,7 +9,7 @@
  * 4. Context Extraction: Automatically sends data-tenant and data-product-id with each turn.
  */
 
-(function () {
+(async function () {
   "use strict";
 
   // Prevent multiple initializations
@@ -25,13 +25,28 @@
   const tenantId =
     (currentScript && currentScript.getAttribute("data-tenant")) ||
     "tenant_novaretail";
-  const productId =
+  const configuredProductId =
     (currentScript && currentScript.getAttribute("data-product-id")) || null;
   const tokenCallbackName =
     (currentScript && currentScript.getAttribute("data-get-token")) || null;
   const apiBase =
     (currentScript && currentScript.getAttribute("data-api-base")) ||
     (currentScript && currentScript.src ? new URL(currentScript.src).origin : "");
+
+  const defaults = { name: "NovaRetail Support", greeting: "Hi! How can I help you today?", primaryColor: "#0284c7", theme: "light", launcherSide: "right", quickPrompts: ["Track my order", "Product questions"], autoOpen: false };
+  let config = defaults;
+  const isPreview = currentScript?.hasAttribute("data-preview-config");
+  try {
+    const previewValue = currentScript?.getAttribute("data-preview-config");
+    const response = isPreview ? null : await fetch(`${apiBase}/widget/config?tenant_id=${encodeURIComponent(tenantId)}`, { mode: "cors", credentials: "omit" });
+    const incoming = isPreview ? JSON.parse(previewValue) : (response?.ok ? await response.json() : {});
+    if (incoming && typeof incoming === "object") config = { ...defaults, ...incoming };
+  } catch (_) { /* Keep safe presentation defaults when config cannot be loaded. */ }
+  if (!/^#[0-9a-f]{6}$/i.test(config.primaryColor)) config.primaryColor = defaults.primaryColor;
+  if (!Array.isArray(config.quickPrompts)) config.quickPrompts = defaults.quickPrompts;
+  config.quickPrompts = config.quickPrompts.filter((item) => typeof item === "string").slice(0, 3);
+  config.name = String(config.name || defaults.name).slice(0, 48);
+  config.greeting = String(config.greeting || defaults.greeting).slice(0, 180);
 
   // 2. Generate or retrieve conversation ID from sessionStorage
   let convId = sessionStorage.getItem("novaretail_conv_id");
@@ -50,15 +65,15 @@
   // 4. Scoped CSS for Shadow DOM
   const styles = `
     :host {
-      --primary: #0284c7;
-      --primary-dark: #0369a1;
-      --bg: #ffffff;
-      --surface: #f8fafc;
-      --border: #e2e8f0;
-      --text: #0f172a;
-      --text-muted: #64748b;
-      --bot-bubble: #f1f5f9;
-      --user-bubble: #0284c7;
+      --primary: ${config.primaryColor};
+      --primary-dark: ${config.primaryColor};
+      --bg: ${config.theme === "dark" ? "#111827" : "#ffffff"};
+      --surface: ${config.theme === "dark" ? "#1f2937" : "#f8fafc"};
+      --border: ${config.theme === "dark" ? "#374151" : "#e2e8f0"};
+      --text: ${config.theme === "dark" ? "#f9fafb" : "#0f172a"};
+      --text-muted: ${config.theme === "dark" ? "#cbd5e1" : "#64748b"};
+      --bot-bubble: ${config.theme === "dark" ? "#273449" : "#f1f5f9"};
+      --user-bubble: ${config.primaryColor};
       --user-text: #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       box-sizing: border-box;
@@ -66,6 +81,7 @@
       position: fixed;
       bottom: 24px;
       right: 24px;
+      ${config.launcherSide === "left" ? "left: 24px; right: auto;" : ""}
     }
     *, *::before, *::after {
       box-sizing: border-box;
@@ -171,7 +187,7 @@
       flex: 1;
       padding: 16px;
       overflow-y: auto;
-      background: #fafafa;
+      background: var(--surface);
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -200,6 +216,72 @@
       color: var(--text);
       border: 1px solid var(--border);
       border-top-left-radius: 4px;
+      white-space: normal;
+    }
+    .msg-row.bot .bubble p {
+      margin: 0 0 6px 0;
+    }
+    .msg-row.bot .bubble p:last-child {
+      margin-bottom: 0;
+    }
+    .msg-row.bot .bubble h3,
+    .msg-row.bot .bubble h4 {
+      margin: 6px 0 4px 0;
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .msg-row.bot .bubble ul,
+    .msg-row.bot .bubble ol {
+      margin: 4px 0 6px 18px;
+      padding: 0;
+    }
+    .msg-row.bot .bubble li {
+      margin-bottom: 3px;
+    }
+    .msg-row.bot .bubble strong {
+      font-weight: 600;
+    }
+    .msg-row.bot .bubble code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      background: rgba(0, 0, 0, 0.06);
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    .msg-row.bot .bubble a {
+      color: var(--primary);
+      text-decoration: underline;
+      word-break: break-all;
+    }
+    .msg-row.bot .bubble .table-wrap {
+      overflow-x: auto;
+      margin: 8px 0;
+      max-width: 100%;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.6);
+    }
+    .msg-row.bot .bubble table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11.5px;
+      text-align: left;
+    }
+    .msg-row.bot .bubble th {
+      background: rgba(0, 0, 0, 0.05);
+      padding: 5px 8px;
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .msg-row.bot .bubble td {
+      padding: 5px 8px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .msg-row.bot .bubble tr:last-child td {
+      border-bottom: none;
     }
     .msg-row.user .bubble {
       background: var(--user-bubble);
@@ -246,7 +328,7 @@
       display: flex;
       gap: 6px;
       padding: 8px 12px;
-      background: #ffffff;
+      background: var(--bg);
       border-top: 1px solid var(--border);
       overflow-x: auto;
       scrollbar-width: none;
@@ -255,9 +337,9 @@
       display: none;
     }
     .chip {
-      background: #f1f5f9;
-      border: 1px solid #cbd5e1;
-      color: #334155;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
       font-size: 11.5px;
       padding: 5px 10px;
       border-radius: 9999px;
@@ -272,7 +354,7 @@
     /* Input Area */
     .input-bar {
       padding: 12px;
-      background: #ffffff;
+      background: var(--bg);
       border-top: 1px solid var(--border);
       display: flex;
       gap: 8px;
@@ -395,7 +477,7 @@
   chatWindow.innerHTML = `
     <div class="chat-header">
       <div>
-        <div class="header-title">NovaRetail Support</div>
+        <div class="header-title"></div>
         <div class="header-status">
           <span class="status-dot"></span>
           <span>Online | English & Tanglish</span>
@@ -410,9 +492,6 @@
       <span class="dot"></span>
     </div>
     <div class="quick-chips">
-      <button class="chip" data-msg="Track my order">Track Order</button>
-      <button class="chip" data-msg="Return & refund policy">Return Policy</button>
-      <button class="chip" data-msg="Talk to human agent">Speak with Agent</button>
     </div>
     <div class="input-bar">
       <input type="text" class="input-field" placeholder="Ask a question or enter order ID..." />
@@ -425,13 +504,23 @@
     <div class="otp-overlay">
       <div class="otp-card">
         <div class="otp-title">Security Verification</div>
-        <div class="otp-desc">Please enter the 6-digit OTP sent to your registered phone to verify identity.</div>
-        <input type="text" class="otp-input" maxlength="6" placeholder="000000" />
+        <div class="otp-desc">We’ll email a 6-digit verification code to your account email.</div>
+        <input type="text" class="otp-input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" aria-label="6-digit email verification code" />
         <button class="otp-btn">Verify & Continue</button>
       </div>
     </div>
   `;
   shadow.appendChild(chatWindow);
+
+  chatWindow.querySelector(".header-title").textContent = config.name;
+  const promptBar = chatWindow.querySelector(".quick-chips");
+  config.quickPrompts.forEach((prompt) => {
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.textContent = prompt;
+    chip.setAttribute("data-msg", prompt);
+    promptBar.appendChild(chip);
+  });
 
   const messagesBody = chatWindow.querySelector(".messages-body");
   const typingIndicator = chatWindow.querySelector(".typing-indicator");
@@ -443,15 +532,163 @@
   const otpVerifyBtn = chatWindow.querySelector(".otp-btn");
 
   let activeChallengeId = null;
+  let pendingStepUpMessage = null;
 
-  // 6. Safe Text Rendering: Zero innerHTML
+  // 6. Safe Text & Markdown Rendering
+  function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderMarkdown(rawText) {
+    if (!rawText) return "";
+    const escaped = escapeHtml(rawText);
+    const lines = escaped.split("\n");
+    const output = [];
+    let inTable = false;
+    let tableHeaders = [];
+    let tableRows = [];
+    let inList = false;
+    let listType = null;
+
+    function flushList() {
+      if (inList) {
+        output.push("</" + listType + ">");
+        inList = false;
+        listType = null;
+      }
+    }
+
+    function flushTable() {
+      if (inTable) {
+        let tbl = '<div class="table-wrap"><table>';
+        if (tableHeaders.length > 0) {
+          tbl += "<thead><tr>";
+          tableHeaders.forEach((th) => {
+            tbl += "<th>" + th + "</th>";
+          });
+          tbl += "</tr></thead>";
+        }
+        if (tableRows.length > 0) {
+          tbl += "<tbody>";
+          tableRows.forEach((row) => {
+            tbl += "<tr>";
+            row.forEach((cell) => {
+              tbl += "<td>" + cell + "</td>";
+            });
+            tbl += "</tr>";
+          });
+          tbl += "</tbody>";
+        }
+        tbl += "</table></div>";
+        output.push(tbl);
+        inTable = false;
+        tableHeaders = [];
+        tableRows = [];
+      }
+    }
+
+    function formatInline(text) {
+      return text
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*(.+?)\*/g, "<em>$1</em>")
+        .replace(/`(.+?)`/g, "<code>$1</code>")
+        .replace(
+          /\[([^\]]+)\]\(((?:https?:\/\/|\/)[^\)]+)\)/g,
+          '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+        );
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      if (line.startsWith("|") && line.endsWith("|")) {
+        flushList();
+        const cells = line
+          .slice(1, -1)
+          .split("|")
+          .map((c) => formatInline(c.trim()));
+        const isDivider = cells.every((c) =>
+          /^:?-+:?$/.test(c.replace(/&amp;/g, "&"))
+        );
+        if (isDivider) {
+          continue;
+        }
+        if (!inTable) {
+          inTable = true;
+          tableHeaders = cells;
+        } else {
+          tableRows.push(cells);
+        }
+        continue;
+      } else {
+        flushTable();
+      }
+
+      const ulMatch = line.match(/^[-*]\s+(.*)$/);
+      if (ulMatch) {
+        if (!inList || listType !== "ul") {
+          flushList();
+          output.push("<ul>");
+          inList = true;
+          listType = "ul";
+        }
+        output.push("<li>" + formatInline(ulMatch[1]) + "</li>");
+        continue;
+      }
+
+      const olMatch = line.match(/^\d+\.\s+(.*)$/);
+      if (olMatch) {
+        if (!inList || listType !== "ol") {
+          flushList();
+          output.push("<ol>");
+          inList = true;
+          listType = "ol";
+        }
+        output.push("<li>" + formatInline(olMatch[1]) + "</li>");
+        continue;
+      }
+
+      flushList();
+
+      if (line.startsWith("### ")) {
+        output.push("<h4>" + formatInline(line.slice(4)) + "</h4>");
+        continue;
+      }
+      if (line.startsWith("## ") || line.startsWith("# ")) {
+        output.push("<h3>" + formatInline(line.replace(/^#+\s*/, "")) + "</h3>");
+        continue;
+      }
+
+      if (line === "") {
+        continue;
+      }
+
+      output.push("<p>" + formatInline(line) + "</p>");
+    }
+
+    flushList();
+    flushTable();
+
+    return output.join("");
+  }
+
   function appendMessage(text, isUser = false) {
     const row = document.createElement("div");
     row.className = "msg-row " + (isUser ? "user" : "bot");
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.textContent = text; // STRICTLY textContent to prevent DOM XSS
+    if (isUser) {
+      bubble.textContent = text; // STRICTLY textContent to prevent DOM XSS
+    } else {
+      bubble.innerHTML = renderMarkdown(text);
+    }
 
     const time = document.createElement("div");
     time.className = "msg-time";
@@ -466,25 +703,80 @@
 
   // 7. Dynamic Token Retrieval
   async function fetchCustomerToken() {
-    if (!tokenCallbackName) return null;
     try {
-      // Evaluate function by name safely on window object
-      const fn = window[tokenCallbackName];
-      if (typeof fn === "function") {
-        return await fn();
+      // 1. Check explicitly configured callback name
+      if (tokenCallbackName && typeof window[tokenCallbackName] === "function") {
+        const token = await window[tokenCallbackName]();
+        if (token) return token;
+      }
+      // 2. Check global ApexStore callback
+      if (typeof window.getApexCustomerToken === "function") {
+        const token = await window.getApexCustomerToken();
+        if (token) return token;
+      }
+      // 3. Check cached token in window or sessionStorage
+      if (window.__apex_customer_token) {
+        return window.__apex_customer_token;
+      }
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        const cached = window.sessionStorage.getItem("apex_customer_token");
+        if (cached) return cached;
+      }
+      // 4. Fallback Auto-Discovery: query storefront auth endpoint
+      if (typeof window !== "undefined" && window.location) {
+        try {
+          const authMeUrl = (window.location.origin === "http://localhost:3000" ? "http://localhost:5000" : "/api") + "/api/auth/me";
+          const res = await fetch(authMeUrl, { credentials: "include" });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.success && data.user) {
+              window.__apex_customer_id = String(data.user.id);
+              if (data.customer_token) {
+                window.__apex_customer_token = data.customer_token;
+                return data.customer_token;
+              }
+            }
+          }
+        } catch (_) {}
       }
     } catch (e) {
-      console.warn("[NovaRetail Widget] Error invoking token callback:", e);
+      console.warn("[NovaRetail Widget] Error retrieving customer token:", e);
     }
     return null;
   }
 
+  function getPageContext() {
+    const url = window.location.href;
+    const path = window.location.pathname.toLowerCase();
+    const productId = configuredProductId ||
+      (window.location.pathname.match(/\/products?\/([a-z0-9][a-z0-9_-]{0,63})/i) || [])[1] || null;
+    const orderId =
+      (window.location.pathname.match(/\/orders?\/(ord-[a-z0-9_-]+)/i) || [])[1] || null;
+    const cartId =
+      (window.location.pathname.match(/\/carts?\/(cart-[a-z0-9_-]+)/i) || [])[1] || null;
+    let pageType = "other";
+    if (productId || /\/product(?:s)?\/[^/]+/.test(path)) pageType = "product_details";
+    else if (/\/products?(?:\/|$)/.test(path)) pageType = "product_listing";
+    else if (orderId) pageType = "order_details";
+    else if (/\/cart(?:\/|$)/.test(path)) pageType = "cart";
+    else if (/\/checkout(?:\/|$)/.test(path)) pageType = "checkout";
+    else if (/\/dashboard(?:\/|$)/.test(path)) pageType = "dashboard";
+    return {
+      url: url.slice(0, 2048),
+      page_type: pageType,
+      product_id: productId,
+      order_id: orderId,
+      cart_id: cartId,
+      title: (document.title || "").slice(0, 200),
+    };
+  }
+
   // 8. Send Turn to Gateway
-  async function sendMessage(text) {
+  async function sendMessage(text, showUserMessage = true) {
     const clean = (text || "").trim();
     if (!clean) return;
 
-    appendMessage(clean, true);
+    if (showUserMessage) appendMessage(clean, true);
     inputField.value = "";
     typingIndicator.classList.add("active");
     messagesBody.scrollTop = messagesBody.scrollHeight;
@@ -503,11 +795,28 @@
       message: clean,
       channel: "web",
       tenant_id: tenantId,
-      product_id: productId,
+      page_context: getPageContext(),
     };
+    if (token) {
+      payload.customer_token = token;
+    }
+    if (window.__apex_customer_id) {
+      payload.customer_id = String(window.__apex_customer_id);
+    } else if (token && token.includes(".")) {
+      try {
+        const parts = token.split(".");
+        if (parts.length >= 2) {
+          const claims = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+          if (claims && claims.sub) {
+            payload.customer_id = String(claims.sub);
+          }
+
+        }
+      } catch (_) {}
+    }
 
     try {
-      const endpoint = (apiBase ? apiBase : "") + "/chat/messages";
+      const endpoint = (apiBase ? apiBase : "") + "/chat/messages?tenant_id=" + encodeURIComponent(tenantId);
       const resp = await fetch(endpoint, {
         method: "POST",
         headers: headers,
@@ -522,6 +831,11 @@
       }
 
       if (!resp.ok) {
+        const debugCode = resp.headers.get("X-Debug-Code");
+        console.error("[NovaRetail Widget] Chat request failed:", {
+          status: resp.status,
+          debugCode: debugCode || "unavailable",
+        });
         appendMessage("Sorry, I encountered a temporary network issue. Please try again in a moment.");
         return;
       }
@@ -533,6 +847,7 @@
 
       // Check if step-up OTP challenge requested
       if (data.requires_step_up) {
+        pendingStepUpMessage = clean;
         triggerStepUp();
       }
     } catch (err) {
@@ -547,36 +862,65 @@
     otpInput.value = "";
     otpInput.focus();
 
+    const token = await fetchCustomerToken();
+    if (!token) {
+      otpOverlay.classList.remove("active");
+      appendMessage("Please sign in to verify using the email address on your account.");
+      return;
+    }
+
     // Trigger OTP send
     try {
-      const endpoint = (apiBase ? apiBase : "") + "/auth/otp/send";
+      const endpoint = (apiBase ? apiBase : "") + "/auth/otp/send?tenant_id=" + encodeURIComponent(tenantId);
       const resp = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
         body: JSON.stringify({
           conv_id: convId,
-          destination: "+919876543210",
           tenant_id: tenantId,
+          order_id: (pendingStepUpMessage && pendingStepUpMessage.match(/\bORD(?:[-_][A-Z0-9]+|\d+)(?:[-_][A-Z0-9]+)*\b/i) || [])[0] || "",
         }),
       });
       if (resp.ok) {
         const data = await resp.json();
         activeChallengeId = data.challenge_id;
+        const desc = chatWindow.querySelector(".otp-desc");
+        desc.textContent = `Enter the 6-digit code sent to ${data.destination || "your account email"}.`;
+      } else {
+        const data = await resp.json().catch(() => ({}));
+        console.error("[NovaRetail Widget] OTP send failed:", {
+          status: resp.status,
+          debugCode: resp.headers.get("X-Debug-Code") || "unavailable",
+        });
+        otpOverlay.classList.remove("active");
+        appendMessage(data.detail || "We couldn’t send your verification email. Please try again.");
       }
     } catch (e) {
+      otpOverlay.classList.remove("active");
+      appendMessage("We couldn’t connect to send your verification email. Please try again.");
       console.warn("[NovaRetail Widget] Failed to request OTP challenge:", e);
     }
   }
 
   async function verifyStepUp() {
     const code = (otpInput.value || "").trim();
-    if (!code || code.length < 4) return;
+    if (!/^\d{6}$/.test(code) || !activeChallengeId) {
+      otpInput.setCustomValidity("Enter the 6-digit code from your email.");
+      otpInput.reportValidity();
+      return;
+    }
+    otpInput.setCustomValidity("");
+    const token = await fetchCustomerToken();
+    if (!token) {
+      appendMessage("Please sign in again before verifying this code.");
+      return;
+    }
 
     try {
-      const endpoint = (apiBase ? apiBase : "") + "/auth/otp/verify";
+      const endpoint = (apiBase ? apiBase : "") + "/auth/otp/verify?tenant_id=" + encodeURIComponent(tenantId);
       const resp = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(token ? { "Authorization": "Bearer " + token } : {}) },
         body: JSON.stringify({
           conv_id: convId,
           challenge_id: activeChallengeId || "ch_default",
@@ -587,12 +931,20 @@
       const data = await resp.json();
       if (data.success) {
         otpOverlay.classList.remove("active");
-        appendMessage("Verification successful! Processing your refund request now...");
+        activeChallengeId = null;
+        const pendingMessage = pendingStepUpMessage;
+        pendingStepUpMessage = null;
+        if (pendingMessage) {
+          appendMessage("Email verified. Continuing your request...");
+          await sendMessage(pendingMessage, false);
+        } else {
+          appendMessage("Email verified successfully.");
+        }
       } else {
-        alert(data.message || "Invalid OTP code. Please try again.");
+        appendMessage(data.message || "Invalid OTP code. Please try again.");
       }
     } catch (e) {
-      alert("Verification failed. Please check network connection.");
+      appendMessage("Verification failed because of a connection issue. Please try again.");
     }
   }
 
@@ -602,7 +954,7 @@
     if (chatWindow.classList.contains("open")) {
       inputField.focus();
       if (messagesBody.children.length === 0) {
-        appendMessage("Hello! Welcome to NovaRetail. How can I assist you with your orders or product queries today?");
+        appendMessage(config.greeting);
       }
     }
   });
@@ -634,4 +986,8 @@
   otpInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") verifyStepUp();
   });
+  if (config.autoOpen && !sessionStorage.getItem("novaretail_widget_auto_opened")) {
+    sessionStorage.setItem("novaretail_widget_auto_opened", "1");
+    setTimeout(() => launcher.click(), 500);
+  }
 })();

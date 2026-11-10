@@ -54,6 +54,10 @@ class AIRouter:
         # 1. Normalize Language & Extract Entities
         norm = LanguageNormalizer.normalize(message)
         clean_msg = norm.cleaned_text.lower()
+        refund_action_without_order = (
+            not norm.extracted_order_id
+            and clean_msg in {"refund", "return", "i want a refund", "i want to return an item"}
+        )
 
         # 2. Check for Human Handoff Request
         if norm.is_human_request:
@@ -76,6 +80,85 @@ class AIRouter:
                 intent="greeting",
                 confidence=1.0,
                 reason="Matched standard greeting template"
+            )
+
+        # 3b. Check for Common Policy & FAQ Templates (Zero-Cost Deterministic Route)
+        if any(p in clean_msg for p in (
+            "payment method", "payment methods", "payment option", "payment options",
+            "how can i pay", "how to pay", "modes of payment", "cash on delivery", "accept cod",
+            "accept upi", "payment accept", "methods do you accept", "ways to pay"
+        )):
+            return RouteDecision(
+                route_type="template",
+                normalized=norm,
+                template_response=TemplateResponder.get_payment_methods(norm.language),
+                intent="payment_methods",
+                confidence=1.0,
+                reason="Matched payment methods FAQ template"
+            )
+
+        if any(p in clean_msg for p in (
+            "shipping policy", "shipping charges", "delivery charges", "how long does shipping take",
+            "how long does delivery take", "how long does shipping and delivery take",
+            "shipping and delivery", "shipping time", "delivery time", "delivery timeline",
+            "delivery timelines", "free shipping", "shipping details", "delivery details",
+            "delivery fee", "shipping fee"
+        )):
+            return RouteDecision(
+                route_type="template",
+                normalized=norm,
+                template_response=TemplateResponder.get_shipping_policy(norm.language),
+                intent="shipping_policy",
+                confidence=1.0,
+                reason="Matched shipping & delivery FAQ template"
+            )
+
+        if any(p in clean_msg for p in (
+            "how to cancel order", "how can i cancel an order", "can i cancel my order",
+            "can i cancel an order", "cancellation policy", "cancel my order policy",
+            "cancel policy", "order cancellation policy", "rules for cancellation",
+            "cancellation rules", "how do i cancel"
+        )) and not norm.extracted_order_id:
+            return RouteDecision(
+                route_type="template",
+                normalized=norm,
+                template_response=TemplateResponder.get_cancellation_policy(norm.language),
+                intent="cancellation_policy",
+                confidence=1.0,
+                reason="Matched cancellation policy FAQ template"
+            )
+
+        if any(p in clean_msg for p in (
+            "support hours", "customer care timing", "support timings", "customer service hours",
+            "customer support hours", "helpline number", "contact support", "contact info",
+            "how to contact", "support team hours", "operating hours", "opening hours"
+        )):
+            return RouteDecision(
+                route_type="template",
+                normalized=norm,
+                template_response=TemplateResponder.get_support_hours(norm.language),
+                intent="support_hours",
+                confidence=1.0,
+                reason="Matched customer support hours FAQ template"
+            )
+
+        if (
+            any(p in clean_msg for p in (
+                "return policy", "refund policy", "returns policy", "refunds policy",
+                "return and refund", "general return policy",
+                "ரிட்டர்ன்", "ரீஃபண்ட்"
+            ))
+            and not any(w in clean_msg for w in ("electronics", "watch", "buds", "phone", "window for", "policy on electronics"))
+            and not norm.extracted_order_id
+            and not refund_action_without_order
+        ):
+            return RouteDecision(
+                route_type="template",
+                normalized=norm,
+                template_response=TemplateResponder.get_return_policy(norm.language),
+                intent="return_policy",
+                confidence=1.0,
+                reason="Matched return policy FAQ template"
             )
 
         # 4. Check Cache (e.g. for common FAQ queries)

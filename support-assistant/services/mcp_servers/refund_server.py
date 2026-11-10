@@ -33,10 +33,14 @@ class MCPRefundServer:
                 "message": "Please log in to check refund eligibility."
             }
 
+        eligibility_kwargs = {}
+        if ctx.storefront_customer_token:
+            eligibility_kwargs["customer_token"] = ctx.storefront_customer_token
         is_eligible, reason, amount = await self.refunds.check_eligibility(
             customer_id=ctx.customer_id,
             order_id=order_id,
-            item_id=item_id
+            item_id=item_id,
+            **eligibility_kwargs,
         )
 
         return {
@@ -61,19 +65,38 @@ class MCPRefundServer:
         ctx = ctx_from_token(auth_token)
 
         # 1. Enforce Step-up OTP Verification (Section 15.1.1 & 15.1.4)
+        if not ctx.level.satisfies(AuthLevel.IDENTIFIED):
+            return {
+                "authorized": False,
+                "needs_auth": "login_required",
+                "message": "Please log in to your account before requesting a refund."
+            }
+
         if not ctx.level.satisfies(AuthLevel.VERIFIED):
             return {
                 "authorized": False,
                 "needs_auth": "otp_required",
                 "message": (
                     "To process a refund for your security, we require a quick verification code. "
-                    "Please enter the OTP sent to your registered mobile number."
+                    "Please enter the OTP sent to your registered email address."
                 )
+            }
+
+        if ctx.storefront_customer_token and not ctx.storefront_refund_verification_token:
+            return {
+                "authorized": False,
+                "needs_auth": "otp_required",
+                "message": "Please verify the refund using the code sent to your account email.",
             }
 
         # 2. Determine refund amount if not supplied by model
         if amount_inr is None:
-            _, _, max_amount = await self.refunds.check_eligibility(ctx.customer_id, order_id)
+            if ctx.storefront_customer_token:
+                _, _, max_amount = await self.refunds.check_eligibility(
+                    ctx.customer_id, order_id, customer_token=ctx.storefront_customer_token
+                )
+            else:
+                _, _, max_amount = await self.refunds.check_eligibility(ctx.customer_id, order_id)
             amount_inr = max_amount
 
         # 3. Generate deterministic idempotency key
@@ -85,12 +108,18 @@ class MCPRefundServer:
         )
 
         # 4. Submit refund request through adapter
+        refund_kwargs = {}
+        if ctx.storefront_customer_token:
+            refund_kwargs["customer_token"] = ctx.storefront_customer_token
+        if ctx.storefront_refund_verification_token:
+            refund_kwargs["storefront_verification_token"] = ctx.storefront_refund_verification_token
         result = await self.refunds.request_refund(
             customer_id=ctx.customer_id,
             order_id=order_id,
             amount_inr=amount_inr,
             reason=reason,
-            idempotency_key=idem_key
+            idempotency_key=idem_key,
+            **refund_kwargs,
         )
 
         return {

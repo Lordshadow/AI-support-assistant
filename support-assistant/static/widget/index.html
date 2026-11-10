@@ -32,7 +32,20 @@
     .msg.bot { align-self: flex-start; }
     .msg.user { align-self: flex-end; }
     .bubble { padding: 10px 14px; border-radius: 14px; font-size: 0.9rem; line-height: 1.45; word-break: break-word; }
-    .msg.bot .bubble { background: var(--bot-bubble); color: var(--text-main); border: 1px solid var(--border); border-top-left-radius: 4px; }
+    .msg.bot .bubble { background: var(--bot-bubble); color: var(--text-main); border: 1px solid var(--border); border-top-left-radius: 4px; white-space: normal; }
+    .msg.bot .bubble p { margin: 0 0 6px 0; }
+    .msg.bot .bubble p:last-child { margin-bottom: 0; }
+    .msg.bot .bubble h3, .msg.bot .bubble h4 { margin: 6px 0 4px 0; font-size: 0.95rem; font-weight: 700; color: var(--text-main); }
+    .msg.bot .bubble ul, .msg.bot .bubble ol { margin: 4px 0 6px 18px; padding: 0; }
+    .msg.bot .bubble li { margin-bottom: 3px; }
+    .msg.bot .bubble strong { font-weight: 600; }
+    .msg.bot .bubble code { font-family: monospace; font-size: 0.8rem; background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 4px; }
+    .msg.bot .bubble a { color: var(--primary); text-decoration: underline; word-break: break-all; }
+    .msg.bot .bubble .table-wrap { overflow-x: auto; margin: 8px 0; max-width: 100%; border-radius: 6px; border: 1px solid var(--border); background: white; }
+    .msg.bot .bubble table { width: 100%; border-collapse: collapse; font-size: 0.8rem; text-align: left; }
+    .msg.bot .bubble th { background: #f8fafc; padding: 6px 8px; font-weight: 600; border-bottom: 1px solid var(--border); }
+    .msg.bot .bubble td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    .msg.bot .bubble tr:last-child td { border-bottom: none; }
     .msg.user .bubble { background: var(--user-bubble); color: white; border-top-right-radius: 4px; }
     .msg-meta { font-size: 0.7rem; color: var(--text-muted); margin-top: 4px; display: flex; gap: 8px; }
     .msg.user .msg-meta { align-self: flex-end; }
@@ -83,7 +96,7 @@
     <!-- Quick Actions -->
     <div class="quick-prompts">
       <button class="chip" onclick="sendPrompt('Where is my order ORD-1029?')">📦 Track ORD-1029</button>
-      <button class="chip" onclick="sendPrompt('What is the price and battery life of Pulse Buds 141?')">🎧 Pulse Buds 141</button>
+      <button class="chip" onclick="sendPrompt('What are the key specifications of the Aura Pro 4K Drone with Gimbal Stabilizer?')">🎧 Aura Pro specs</button>
       <button class="chip" onclick="sendPrompt('En order status sollunga')">🗣️ Tanglish Check</button>
       <button class="chip" onclick="sendPrompt('I want a refund for ORD-5501')">💳 Refund ORD-5501</button>
     </div>
@@ -114,6 +127,132 @@
     let authLevel = "anonymous";
     let activeChallengeId = null;
 
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderMarkdown(rawText) {
+      if (!rawText) return "";
+      const escaped = escapeHtml(rawText);
+      const lines = escaped.split("\n");
+      const output = [];
+      let inTable = false;
+      let tableHeaders = [];
+      let tableRows = [];
+      let inList = false;
+      let listType = null;
+
+      function flushList() {
+        if (inList) {
+          output.push("</" + listType + ">");
+          inList = false;
+          listType = null;
+        }
+      }
+
+      function flushTable() {
+        if (inTable) {
+          let tbl = '<div class="table-wrap"><table>';
+          if (tableHeaders.length > 0) {
+            tbl += "<thead><tr>";
+            tableHeaders.forEach((th) => { tbl += "<th>" + th + "</th>"; });
+            tbl += "</tr></thead>";
+          }
+          if (tableRows.length > 0) {
+            tbl += "<tbody>";
+            tableRows.forEach((row) => {
+              tbl += "<tr>";
+              row.forEach((cell) => { tbl += "<td>" + cell + "</td>"; });
+              tbl += "</tr>";
+            });
+            tbl += "</tbody>";
+          }
+          tbl += "</table></div>";
+          output.push(tbl);
+          inTable = false;
+          tableHeaders = [];
+          tableRows = [];
+        }
+      }
+
+      function formatInline(text) {
+        return text
+          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+          .replace(/\*(.+?)\*/g, "<em>$1</em>")
+          .replace(/`(.+?)`/g, "<code>$1</code>")
+          .replace(/\[([^\]]+)\]\(((?:https?:\/\/|\/)[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      }
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+
+        if (line.startsWith("|") && line.endsWith("|")) {
+          flushList();
+          const cells = line.slice(1, -1).split("|").map((c) => formatInline(c.trim()));
+          const isDivider = cells.every((c) => /^:?-+:?$/.test(c.replace(/&amp;/g, "&")));
+          if (isDivider) continue;
+          if (!inTable) {
+            inTable = true;
+            tableHeaders = cells;
+          } else {
+            tableRows.push(cells);
+          }
+          continue;
+        } else {
+          flushTable();
+        }
+
+        const ulMatch = line.match(/^[-*]\s+(.*)$/);
+        if (ulMatch) {
+          if (!inList || listType !== "ul") {
+            flushList();
+            output.push("<ul>");
+            inList = true;
+            listType = "ul";
+          }
+          output.push("<li>" + formatInline(ulMatch[1]) + "</li>");
+          continue;
+        }
+
+        const olMatch = line.match(/^\d+\.\s+(.*)$/);
+        if (olMatch) {
+          if (!inList || listType !== "ol") {
+            flushList();
+            output.push("<ol>");
+            inList = true;
+            listType = "ol";
+          }
+          output.push("<li>" + formatInline(olMatch[1]) + "</li>");
+          continue;
+        }
+
+        flushList();
+
+        if (line.startsWith("### ")) {
+          output.push("<h4>" + formatInline(line.slice(4)) + "</h4>");
+          continue;
+        }
+        if (line.startsWith("## ") || line.startsWith("# ")) {
+          output.push("<h3>" + formatInline(line.replace(/^#+\s*/, "")) + "</h3>");
+          continue;
+        }
+
+        if (line === "") continue;
+
+        output.push("<p>" + formatInline(line) + "</p>");
+      }
+
+      flushList();
+      flushTable();
+      return output.join("");
+    }
+
     function appendMessage(text, isUser, meta = "") {
       const box = document.getElementById("msgBox");
       const msgDiv = document.createElement("div");
@@ -121,7 +260,11 @@
 
       const bubble = document.createElement("div");
       bubble.className = "bubble";
-      bubble.innerText = text;
+      if (isUser) {
+        bubble.textContent = text;
+      } else {
+        bubble.innerHTML = renderMarkdown(text);
+      }
 
       const metaDiv = document.createElement("div");
       metaDiv.className = "msg-meta";
@@ -235,6 +378,15 @@
         appendMessage("✅ Identity verified successfully in demo mode!", false, "Security Guard");
       }
     }
+  </script>
+
+  <!-- Embeddable Floating Customer Support Widget Script -->
+  <script
+    src="/widget/v1/widget.js"
+    data-tenant="tenant_novaretail"
+    data-api-base=""
+    data-product-id="P1041"
+    defer>
   </script>
 </body>
 </html>

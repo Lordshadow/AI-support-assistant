@@ -7,8 +7,11 @@ import unittest
 import sys
 from pathlib import Path
 import json
+import time
+import jwt
 import hmac
 import hashlib
+from unittest.mock import AsyncMock, patch
 
 # Add support-assistant to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -23,32 +26,39 @@ from core.router.cache import CacheService
 from core.router.router import AIRouter
 from services.worker.llm_client import MockLLMClient
 from services.worker.orchestrator import WorkerOrchestrator
+from services.worker.spend_manager import spend_manager
 from services.assistant_api.jwt_auth import mint_customer_token, verify_customer_token
 from services.assistant_api.otp_service import OTPService
 from services.assistant_api.whatsapp_security import WhatsAppSecurity
-from services.assistant_api.gateway_app import GatewayApp
+from services.assistant_api.gateway_app import GatewayApp, MockOTPDeliveryAdapter
 
 
 def run_sync(coro):
     """Drive in-memory coroutine stack without socket dependencies."""
-    stack = [coro]
-    val = None
-    while stack:
-        try:
-            nxt = stack[-1].send(val)
-            val = None
-            if hasattr(nxt, "send"):
-                stack.append(nxt)
-            else:
-                val = nxt
-        except StopIteration as e:
-            stack.pop()
-            val = e.value
-    return val
+    async def spend_allowed(_tenant_id, *_args, **_kwargs):
+        return False, "Spend within limits"
+
+    with patch.object(spend_manager, "is_spend_capped", new=spend_allowed):
+        stack = [coro]
+        val = None
+        while stack:
+            try:
+                nxt = stack[-1].send(val)
+                val = None
+                if hasattr(nxt, "send"):
+                    stack.append(nxt)
+                else:
+                    val = nxt
+            except StopIteration as e:
+                stack.pop()
+                val = e.value
+        return val
 
 
 def call_asgi(app: GatewayApp, method: str, path: str, headers: dict = None, body: bytes = b"", query_string: str = ""):
     """Invokes ASGI application in-memory without OS socket dependencies."""
+    if "?" in path and not query_string:
+        path, query_string = path.split("?", 1)
     headers_list = []
     if headers:
         for k, v in headers.items():
@@ -131,12 +141,15 @@ class TestAssistantAPIGateway(unittest.TestCase):
         self.verify_token = "novaretail_verify_token_secure"
         self.wa_sec = WhatsAppSecurity(app_secret=self.app_secret, verify_token=self.verify_token)
         self.otp_service = OTPService()
+        self.otp_delivery = MockOTPDeliveryAdapter()
 
         self.gateway = GatewayApp(
             orchestrator=self.orchestrator,
             otp_service=self.otp_service,
-            whatsapp_security=self.wa_sec
+            whatsapp_security=self.wa_sec,
+            otp_delivery=self.otp_delivery,
         )
+        self.gateway._resolve_customer_email = AsyncMock(return_value="customer@example.test")
 
     # ========================================================================
     # 1. Customer JWT Verification (Section 15.1.2)
@@ -246,6 +259,27 @@ class TestAssistantAPIGateway(unittest.TestCase):
         )
         self.assertEqual(invalid_res["status"], 403)
 
+    def test_webhooks_are_disabled_without_configured_secrets(self):
+        unconfigured = GatewayApp(orchestrator=self.orchestrator)
+        response = call_asgi(
+            unconfigured,
+            "GET",
+            "/webhooks/whatsapp",
+            query_string="hub.mode=subscribe&hub.challenge=qa&hub.verify_token=anything",
+        )
+        self.assertEqual(response["status"], 503)
+        self.assertIn("not configured", response["text"])
+
+        response = call_asgi(
+            unconfigured,
+            "POST",
+            "/webhooks/whatsapp",
+            headers={"Content-Type": "application/json"},
+            body=b'{"object":"whatsapp_business_account","entry":[]}',
+        )
+        self.assertEqual(response["status"], 503)
+        self.assertIn("not configured", response["text"])
+
     def test_whatsapp_signature_verification_and_deduplication(self):
         payload = {
             "entry": [{
@@ -334,17 +368,22 @@ class TestAssistantAPIGateway(unittest.TestCase):
 
     def test_gateway_otp_step_up_flow(self):
         conv_id = "conv_stepup_1"
+        auth_header = "Bearer customer_cust42"
 
         # 1. Send OTP
         res_send = call_asgi(
             self.gateway,
             "POST",
             "/auth/otp/send",
-            headers={"Content-Type": "application/json"},
-            body=json.dumps({"conv_id": conv_id, "destination": "+919876543210"}).encode("utf-8")
+            headers={"Content-Type": "application/json", "Authorization": auth_header},
+            body=json.dumps({"conv_id": conv_id, "tenant_id": "demo-shop"}).encode("utf-8")
         )
         self.assertEqual(res_send["status"], 200)
         ch_id = res_send["json"]["challenge_id"]
+        self.assertEqual(len(self.otp_delivery.deliveries), 1)
+        self.assertEqual(self.otp_delivery.deliveries[0]["destination"], "customer@example.test")
+        self.assertEqual(res_send["json"]["destination"], "c***@example.test")
+        self.assertNotIn("code", res_send["json"])
 
         # Retrieve test record code for verification
         record = self.otp_service._challenges[ch_id]
@@ -353,7 +392,7 @@ class TestAssistantAPIGateway(unittest.TestCase):
         test_code = "654321"
         ch_id2, _ = self.otp_service.create_challenge(
             session=self.gateway.get_or_create_session("demo-shop", conv_id),
-            destination="+919876543210",
+            destination="customer@example.test",
             fixed_code_for_test=test_code
         )
 
@@ -362,7 +401,7 @@ class TestAssistantAPIGateway(unittest.TestCase):
             self.gateway,
             "POST",
             "/auth/otp/verify",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Authorization": auth_header},
             body=json.dumps({
                 "conv_id": conv_id,
                 "challenge_id": ch_id2,
@@ -384,11 +423,224 @@ class TestAssistantAPIGateway(unittest.TestCase):
         self.assertEqual(res_chat["status"], 200)
         self.assertEqual(res_chat["json"]["auth_level"], "verified")
 
+        # 4. Subsequent chat message with Bearer customer token also preserves VERIFIED status
+        res_chat_auth = call_asgi(
+            self.gateway,
+            "POST",
+            "/chat/messages",
+            headers={"Content-Type": "application/json", "Authorization": "Bearer customer_cust42"},
+            body=json.dumps({"conv_id": conv_id, "message": "Confirm refund ORD-1001"}).encode("utf-8")
+        )
+        self.assertEqual(res_chat_auth["status"], 200)
+        self.assertEqual(res_chat_auth["json"]["auth_level"], "verified")
+
+    def test_apexstore_refund_otp_uses_order_scoped_store_verification(self):
+        conv_id = "conv_storefront_refund_otp"
+        customer_token = jwt.encode(
+            {"iss": "ApexStore", "sub": "42", "exp": int(time.time()) + 300},
+            "test-signing-key",
+            algorithm="HS256",
+        )
+        calls = []
+
+        class FakeResponse:
+            headers = {"content-type": "application/json"}
+            status_code = 200
+            def __init__(self, payload):
+                self.payload = payload
+            def json(self):
+                return self.payload
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_args):
+                return None
+            async def post(self, url, headers, json):
+                calls.append((url, headers, json))
+                if url.endswith("/otp/verify"):
+                    return FakeResponse({"verification_token": "store-verified-order-token"})
+                return FakeResponse({"sent_to": "c***@example.test"})
+
+        with patch.dict("os.environ", {
+            "APEXSTORE_CATALOG_API_URL": "http://store.test/api/assistant/v1",
+            "APEXSTORE_CATALOG_API_TOKEN": "scoped-service-token",
+        }), patch("httpx.AsyncClient", FakeClient):
+            sent = call_asgi(
+                self.gateway, "POST", "/auth/otp/send",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {customer_token}"},
+                body=json.dumps({"conv_id": conv_id, "tenant_id": "ApexStore", "order_id": "ORD-12345"}).encode("utf-8"),
+            )
+            self.assertEqual(sent["status"], 200)
+            self.assertEqual(sent["json"]["destination"], "c***@example.test")
+            challenge_id = sent["json"]["challenge_id"]
+
+            verified = call_asgi(
+                self.gateway, "POST", "/auth/otp/verify",
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {customer_token}"},
+                body=json.dumps({
+                    "conv_id": conv_id,
+                    "tenant_id": "ApexStore",
+                    "challenge_id": challenge_id,
+                    "candidate_code": "123456",
+                }).encode("utf-8"),
+            )
+
+        self.assertEqual(verified["status"], 200)
+        self.assertTrue(verified["json"]["success"])
+        session = self.gateway.get_or_create_session("ApexStore", conv_id, f"Bearer {customer_token}")
+        self.assertEqual(session.storefront_refund_verification_token, "store-verified-order-token")
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[0][0].endswith("/orders/ORD-12345/otp"))
+        self.assertTrue(calls[1][0].endswith("/orders/ORD-12345/otp/verify"))
+
+    def test_otp_send_fails_closed_without_delivery_adapter(self):
+        self.gateway.otp_delivery = None
+        res = call_asgi(
+            self.gateway,
+            "POST",
+            "/auth/otp/send",
+            headers={"Content-Type": "application/json"},
+            body=json.dumps({"conv_id": "conv_no_otp_delivery", "destination": "+919876543210"}).encode("utf-8")
+        )
+        self.assertEqual(res["status"], 503)
+        self.assertEqual(res["json"]["code"], "OTP_DELIVERY_UNAVAILABLE")
+        self.assertEqual(self.otp_service._challenges, {})
+
+    def test_otp_send_invalidates_challenge_when_delivery_fails(self):
+        class RejectingDelivery:
+            async def send_otp(self, destination, code):
+                return False
+
+        self.gateway.otp_delivery = RejectingDelivery()
+        res = call_asgi(
+            self.gateway,
+            "POST",
+            "/auth/otp/send",
+            headers={"Content-Type": "application/json", "Authorization": "Bearer customer_cust42"},
+            body=json.dumps({"conv_id": "conv_otp_delivery_failure", "tenant_id": "demo-shop"}).encode("utf-8")
+        )
+        self.assertEqual(res["status"], 502)
+        self.assertEqual(res["json"]["code"], "OTP_DELIVERY_FAILED")
+        self.assertEqual(len(self.otp_service._challenges), 1)
+        self.assertTrue(next(iter(self.otp_service._challenges.values())).is_invalidated)
+
     def test_gateway_health(self):
         res = call_asgi(self.gateway, "GET", "/health")
         self.assertEqual(res["status"], 200)
         self.assertEqual(res["json"]["status"], "healthy")
         self.assertEqual(res["json"]["service"], "novaretail-assistant-api")
+
+    def test_malformed_chat_json_returns_generic_client_error(self):
+        res = call_asgi(
+            self.gateway,
+            "POST",
+            "/chat/messages",
+            headers={"Content-Type": "application/json"},
+            body=b'{"message":',
+        )
+        self.assertEqual(res["status"], 400)
+        self.assertEqual(res["json"]["detail"], "Invalid JSON body.")
+        self.assertNotIn("line", res["text"])
+
+    def test_chat_internal_exception_returns_generic_server_error(self):
+        self.gateway.orchestrator.process_turn = AsyncMock(
+            side_effect=RuntimeError("private database host and credentials")
+        )
+        with self.assertLogs("services.assistant_api.gateway_app", level="ERROR") as captured:
+            res = call_asgi(
+                self.gateway,
+                "POST",
+                "/chat/messages",
+                headers={"Content-Type": "application/json"},
+                body=json.dumps({"message": "hello"}).encode("utf-8"),
+            )
+        self.assertEqual(res["status"], 500)
+        self.assertEqual(res["json"]["detail"], "Internal server error.")
+        self.assertNotIn("private database", res["text"])
+        self.assertNotIn("private database", " ".join(captured.output))
+        self.assertIn("RuntimeError", " ".join(captured.output))
+
+    def test_malformed_otp_json_returns_generic_client_error(self):
+        res = call_asgi(
+            self.gateway,
+            "POST",
+            "/auth/otp/verify",
+            headers={"Content-Type": "application/json"},
+            body=b'{"challenge_id":',
+        )
+        self.assertEqual(res["status"], 400)
+        self.assertEqual(res["json"]["detail"], "Invalid JSON body.")
+
+    def test_customer_jwt_apexstore_format(self):
+        # RS256 token without secret verification for ApexStore storefront
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "1", "iss": "apexstore", "iat": now, "exp": now + 3600},
+            "dummy_key_not_checked_without_sig",
+            algorithm="HS256"
+        )
+        session = verify_customer_token(f"Bearer {token}", expected_tenant="ApexStore")
+        self.assertEqual(session.customer_id, "1")
+        self.assertEqual(session.level, AuthLevel.IDENTIFIED)
+
+    def test_apexstore_customer_token_is_carried_to_order_adapter_context(self):
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        now = int(time.time())
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        token = jwt.encode(
+            {"sub": "7", "iss": "apexstore", "iat": now, "exp": now + 3600},
+            private_key,
+            algorithm="RS256",
+        )
+        session = self.gateway.get_or_create_session(
+            "ApexStore", "conv_storefront_order", auth_header=f"Bearer {token}"
+        )
+
+        self.assertEqual(session.customer_id, "7")
+        self.assertEqual(session.storefront_customer_token, token)
+
+    def test_chat_message_with_unverified_customer_id_stays_anonymous(self):
+        res = call_asgi(
+            self.gateway,
+            "POST",
+            "/chat/messages?tenant_id=ApexStore",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "http://localhost:3000"
+            },
+            body=json.dumps({
+                "message": "Hello",
+                "tenant_id": "ApexStore",
+                "customer_id": "1"
+            }).encode("utf-8"),
+        )
+        self.assertEqual(res["status"], 200)
+        data = res["json"]
+        self.assertEqual(data["auth_level"], "anonymous")
+        self.assertFalse(data["requires_step_up"])
+        self.assertNotIn("ORD-20261103-", data["reply"])
+
+    def test_chat_message_with_token_resolves_orders(self):
+        res = call_asgi(
+            self.gateway,
+            "POST",
+            "/chat/messages?tenant_id=ApexStore",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "http://localhost:3000"
+            },
+            body=json.dumps({
+                "message": "Check my orders",
+                "tenant_id": "ApexStore",
+                "token": "customer_1"
+            }).encode("utf-8"),
+        )
+        self.assertEqual(res["status"], 200)
+        data = res["json"]
+        self.assertEqual(data["auth_level"], "identified")
+        self.assertIn("ORD-20261103-", data["reply"])
 
 
 if __name__ == "__main__":

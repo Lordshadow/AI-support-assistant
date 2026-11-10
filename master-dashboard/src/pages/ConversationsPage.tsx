@@ -172,7 +172,7 @@ export const ConversationsPage: React.FC<{ showToast?: (type: any, msg: string) 
 
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[11px] text-[#84ABA6]">Channel<select aria-label="Filter conversations by channel" value={channelFilter} onChange={(event) => { setChannelFilter(event.target.value); setPage(0); }} className="mt-1 w-full p-2 rounded-lg bg-[#0B4A47] border border-[rgba(63,210,192,0.2)] text-xs text-[#EAF6F4]"><option value="">All channels</option><option value="web">Web</option><option value="whatsapp">WhatsApp</option></select></label>
-            <label className="text-[11px] text-[#84ABA6]">Handoff<select aria-label="Filter conversations by handoff state" value={handoffFilter} onChange={(event) => { setHandoffFilter(event.target.value); setPage(0); }} className="mt-1 w-full p-2 rounded-lg bg-[#0B4A47] border border-[rgba(63,210,192,0.2)] text-xs text-[#EAF6F4]"><option value="">All states</option><option value="none">None</option><option value="open">Open</option><option value="bot">Bot</option></select></label>
+            <label className="text-[11px] text-[#84ABA6]">Handoff<select aria-label="Filter conversations by handoff state" value={handoffFilter} onChange={(event) => { setHandoffFilter(event.target.value); setPage(0); }} className="mt-1 w-full p-2 rounded-lg bg-[#0B4A47] border border-[rgba(63,210,192,0.2)] text-xs text-[#EAF6F4]"><option value="">All states</option><option value="none">None</option><option value="open">Open</option><option value="assigned">Assigned</option><option value="resolved">Resolved</option><option value="bot">Bot</option></select></label>
           </div>
 
           {listLoading ? (
@@ -423,7 +423,7 @@ export const ConversationsPage: React.FC<{ showToast?: (type: any, msg: string) 
                             key={i}
                             className="p-3 rounded-xl bg-[rgba(4,30,29,0.7)] border border-[rgba(63,210,192,0.15)] font-mono text-xs text-[#B6D5D1]"
                           >
-                            <span className="text-[#3FD2C0] font-bold">{tool.tool}()</span>
+                            <span className="text-[#3FD2C0] font-bold">{tool.tool || tool.name || tool.tool_name || 'Tool'}()</span>
                             <pre className="mt-1 text-[11px] text-[#84ABA6] overflow-x-auto">
                               {JSON.stringify(tool.arguments, null, 2)}
                             </pre>

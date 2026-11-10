@@ -13,6 +13,7 @@ Validates:
 from datetime import datetime, timezone, timedelta
 import json
 import unittest
+from unittest.mock import patch
 import sys
 from pathlib import Path
 
@@ -43,24 +44,29 @@ from core.tracing.grounding_verifier import GroundingVerifier, GroundingResult
 from core.tracing.trace_collector import TraceCollector
 from services.worker.llm_client import MockLLMClient
 from services.worker.orchestrator import WorkerOrchestrator
+from services.worker.spend_manager import spend_manager
 
 
 def run_sync(coro):
     """Drive in-memory coroutine stack synchronously without OS socket dependencies."""
-    stack = [coro]
-    val = None
-    while stack:
-        try:
-            nxt = stack[-1].send(val)
-            val = None
-            if hasattr(nxt, "send"):
-                stack.append(nxt)
-            else:
-                val = nxt
-        except StopIteration as e:
-            stack.pop()
-            val = e.value
-    return val
+    async def spend_allowed(_tenant_id, *_args, **_kwargs):
+        return False, "Spend within limits"
+
+    with patch.object(spend_manager, "is_spend_capped", new=spend_allowed):
+        stack = [coro]
+        val = None
+        while stack:
+            try:
+                nxt = stack[-1].send(val)
+                val = None
+                if hasattr(nxt, "send"):
+                    stack.append(nxt)
+                else:
+                    val = nxt
+            except StopIteration as e:
+                stack.pop()
+                val = e.value
+        return val
 
 
 class TestAdversarialSecurityAndRedTeaming(unittest.TestCase):

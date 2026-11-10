@@ -66,8 +66,8 @@ class LanguageNormalizer:
         lang = cls.detect_language(text)
         text_lower = text.lower().strip()
 
-        # Extract Order ID (e.g., ORD-1029, ORD-5501)
-        order_match = re.search(r"\bORD[-_]?\d+\b", text, re.I)
+        # Extract Order ID (e.g., ORD-1029, ORD-5501, ORD-20261106-6435)
+        order_match = re.search(r"\bORD(?:[-_][A-Za-z0-9]+|\d+)(?:[-_][A-Za-z0-9]+)*\b", text, re.I)
         order_id = order_match.group(0).upper().replace("_", "-") if order_match else None
 
         # Extract Amount (e.g. ₹1,499, Rs. 4500, 2000 rupees)

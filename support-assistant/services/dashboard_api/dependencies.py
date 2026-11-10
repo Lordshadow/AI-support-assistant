@@ -9,7 +9,7 @@ import hashlib
 from typing import Optional, List, Callable
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from db.models import StaffSession, StaffUser, StaffTenantMembership
 from db.session import get_async_session
@@ -49,6 +49,11 @@ async def get_current_staff(request: Request) -> StaffSessionContext:
 
     # 2. Query session row
     async with get_async_session() as session:
+        if session.bind.dialect.name == "postgresql":
+            await session.execute(
+                text("SELECT set_config('app.session_id', :session_id, true)"),
+                {"session_id": session_id},
+            )
         stmt = select(StaffSession).where(
             StaffSession.session_id == session_id,
             StaffSession.revoked_at == None,
@@ -59,6 +64,12 @@ async def get_current_staff(request: Request) -> StaffSessionContext:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Session has expired or was revoked. Please log in again."
+            )
+
+        if session.bind.dialect.name == "postgresql":
+            await session.execute(
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+                {"tenant_id": staff_sess.active_tenant_id},
             )
 
         # 3. Double-Submit CSRF check for state mutations

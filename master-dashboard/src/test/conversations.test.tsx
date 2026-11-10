@@ -55,7 +55,7 @@ const mockTrace = {
   retrieved_chunks: [
     { chunk_id: 'chk_policy_01', title: 'Return Policy Section 3', score: 0.95, text: '30-day window' },
   ],
-  tool_calls: [],
+  tool_calls: [{ name: 'get_product_details', arguments: { product_id: 'P1041' } }],
   grounding_score: 0.96,
   grounding_result: 'grounded',
   prompt_version: 'v2.4.1',
@@ -118,6 +118,7 @@ describe('ConversationsPage & Spec 14.1 Trace Inspector', () => {
       expect(screen.getByText(/WHY THIS ANSWER\? \(SPEC 14\.1 TRACE\)/i)).toBeInTheDocument();
       expect(screen.getByText(/rag_grounded/i)).toBeInTheDocument();
       expect(screen.getByText(/Return Policy Section 3/i)).toBeInTheDocument();
+      expect(screen.getByText('get_product_details()')).toBeInTheDocument();
     });
   });
 
@@ -135,5 +136,19 @@ describe('ConversationsPage & Spec 14.1 Trace Inspector', () => {
     await waitFor(() => expect(screen.getByText(/trace could not be loaded/i)).toBeInTheDocument());
     expect(screen.queryByText(/claude-3-7-sonnet/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/grounded 96%/i)).not.toBeInTheDocument();
+  });
+
+  it('filters by supported channel and persisted handoff states', async () => {
+    renderConversations();
+    await waitFor(() => expect(screen.getByText(/Why this answer\?/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Filter conversations by channel'), { target: { value: 'whatsapp' } });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining('channel=whatsapp')));
+
+    fireEvent.change(screen.getByLabelText('Filter conversations by handoff state'), { target: { value: 'assigned' } });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining('handoff_state=assigned')));
+
+    fireEvent.change(screen.getByLabelText('Filter conversations by handoff state'), { target: { value: 'resolved' } });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining('handoff_state=resolved')));
   });
 });

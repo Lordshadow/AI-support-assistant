@@ -1,0 +1,4 @@
+services:
+  postgres:
+    volumes:
+      - ./support-assistant/tests/fixtures/legacy_qa_fixture.sql:/docker-entrypoint-initdb.d/02_qa_fixture.sql:ro

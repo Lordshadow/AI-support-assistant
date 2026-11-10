@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import (
     create_async_engine, AsyncSession, async_sessionmaker
 )
+from sqlalchemy.pool import NullPool
 
 from db.models import Base
 
@@ -35,11 +36,19 @@ def get_async_engine(url: Optional[str] = None):
     global _async_engine, _async_session_factory
     target_url = url or DEFAULT_ASYNC_URL
     if _async_engine is None or url is not None:
+        engine_options = {
+            "echo": False,
+            "future": True,
+            "pool_pre_ping": True,
+        }
+        # The unittest suite uses independent asyncio event loops. Disabling
+        # connection reuse there prevents asyncpg connections from crossing
+        # loop boundaries; production keeps SQLAlchemy's normal pool by default.
+        if os.getenv("DATABASE_ASYNC_POOL", "").lower() == "null":
+            engine_options["poolclass"] = NullPool
         engine = create_async_engine(
             target_url,
-            echo=False,
-            future=True,
-            pool_pre_ping=True
+            **engine_options
         )
         if url is None:
             _async_engine = engine

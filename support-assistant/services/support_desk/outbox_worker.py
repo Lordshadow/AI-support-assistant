@@ -5,7 +5,11 @@ Reconciles ambiguous timeouts by idempotency key and dispatches Meta WhatsApp te
 """
 
 import asyncio
+import logging
+import os
+import signal
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy import select, update, text
@@ -14,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import RefundRequest, ConversationSession, AuditEvent
 from db.session import get_async_session
 from core.ports import ChannelPort, RefundPort
+
+logger = logging.getLogger(__name__)
 
 
 class OutboxPaymentWorker:
@@ -187,54 +193,64 @@ class OutboxPaymentWorker:
                 processed_count += 1
         return processed_count
 
+    async def run_forever(
+        self,
+        poll_interval: float = 2.0,
+        stop_event: Optional[asyncio.Event] = None,
+        heartbeat_path: str = "/tmp/outbox-worker.heartbeat",
+    ) -> None:
+        """Poll until stopped; only advance readiness after a successful DB pass."""
+        stop_event = stop_event or asyncio.Event()
+        heartbeat = Path(heartbeat_path)
+        while not stop_event.is_set():
+            try:
+                await self.run_once()
+                heartbeat.touch()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Outbox worker polling pass failed")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=poll_interval)
+            except asyncio.TimeoutError:
+                continue
+        heartbeat.unlink(missing_ok=True)
 
-async def run_worker_daemon(poll_interval: float = 2.0, tenant_id: str = "demo-shop") -> None:
-    """Continuous outbox payment worker daemon with graceful shutdown."""
-    import asyncio
-    import logging
-    import signal
-    from adapters.mockshop import MockOrderAdapter, MockRefundAdapter
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    logger = logging.getLogger("outbox_worker")
-    logger.info(f"Starting OutboxPaymentWorker daemon for tenant '{tenant_id}' (poll interval: {poll_interval}s)...")
+class MockPaymentGateway:
+    """Local-only idempotent payment port; never contacts an external provider."""
 
-    orders = MockOrderAdapter()
-    refund_port = MockRefundAdapter(orders)
-    worker = OutboxPaymentWorker(refund_port=refund_port, tenant_id=tenant_id)
+    def __init__(self) -> None:
+        self._payments: dict[str, dict[str, Any]] = {}
 
+    async def process_payment(
+        self, order_id: str, amount_inr: int, idempotency_key: str
+    ) -> dict[str, Any]:
+        return self._payments.setdefault(
+            idempotency_key,
+            {"status": "paid", "order_id": order_id, "amount_inr": amount_inr},
+        )
+
+    async def query_payment_status(self, idempotency_key: str) -> str:
+        payment = self._payments.get(idempotency_key)
+        return payment["status"] if payment else "unknown"
+
+
+async def _run_service() -> None:
+    poll_interval = max(0.25, float(os.getenv("OUTBOX_POLL_INTERVAL", "2")))
+    tenant_id = os.getenv("TENANT_ID", "tenant_novaretail")
     stop_event = asyncio.Event()
-
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop = asyncio.get_running_loop()
-            loop.add_signal_handler(sig, stop_event.set)
-        except (NotImplementedError, AttributeError):
-            pass  # Windows compatibility fallback
+        loop.add_signal_handler(sig, stop_event.set)
 
-    while not stop_event.is_set():
-        try:
-            processed = await worker.run_once()
-            if processed > 0:
-                logger.info(f"Processed {processed} approved refund(s) from transactional outbox.")
-            else:
-                await asyncio.sleep(poll_interval)
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Worker iteration error: {e}", exc_info=True)
-            await asyncio.sleep(poll_interval)
-
-    logger.info("OutboxPaymentWorker daemon stopped cleanly.")
+    worker = OutboxPaymentWorker(
+        refund_port=MockPaymentGateway(),
+        tenant_id=tenant_id,
+    )
+    await worker.run_forever(poll_interval=poll_interval, stop_event=stop_event)
 
 
 if __name__ == "__main__":
-    import asyncio
-    import os
-    tenant = os.getenv("TENANT_ID", "demo-shop")
-    interval = float(os.getenv("OUTBOX_POLL_INTERVAL", "2.0"))
-    try:
-        asyncio.run(run_worker_daemon(poll_interval=interval, tenant_id=tenant))
-    except (KeyboardInterrupt, SystemExit):
-        pass
-
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    asyncio.run(_run_service())
