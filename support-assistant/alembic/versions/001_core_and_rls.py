@@ -389,6 +389,14 @@ def upgrade() -> None:
     )
     op.create_index("idx_kc_tenant_product", "knowledge_chunks", ["tenant_id", "product_id"])
 
+    if is_postgres:
+    op.execute("""
+        CREATE INDEX idx_knowledge_chunks_embedding_hnsw
+        ON knowledge_chunks
+        USING hnsw (embedding vector_cosine_ops)
+        WITH (m = 16, ef_construction = 64);
+    """)
+
     # 16. Knowledge Version Chunks Table (Many-to-Many manifest mapping)
     op.create_table(
         "knowledge_version_chunks",
@@ -445,7 +453,6 @@ def upgrade() -> None:
             DO $$
             BEGIN
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'novaretail_app') THEN
-                    CREATE ROLE novaretail_app WITH LOGIN PASSWORD 'novaretail_app_secret';
                 END IF;
             END
             $$;
