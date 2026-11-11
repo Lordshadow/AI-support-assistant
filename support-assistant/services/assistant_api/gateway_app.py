@@ -790,6 +790,7 @@ class GatewayApp:
                 client = Redis(
                     host=os.getenv("REDIS_HOST", "redis"),
                     port=int(os.getenv("REDIS_PORT", "6379")),
+                    password=os.getenv("REDIS_PASSWORD"),
                     socket_connect_timeout=2,
                     socket_timeout=2,
                 )
