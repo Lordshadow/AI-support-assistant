@@ -15,10 +15,19 @@ import json
 from core.models import SessionContext, AuthLevel
 from core.router.router import AIRouter, RouteDecision
 from services.mcp_servers.dispatcher import MCPToolDispatcher
-from services.worker.llm_client import LLMClient, MockLLMClient, ToolCall
+from services.worker.llm_client import (
+    LLMClient,
+    MockLLMClient,
+    ToolCall,
+    _focused_product_spec_answer,
+)
 from services.worker.spend_manager import spend_manager
 from services.worker.turn_recorder import TurnRecorder
 from services.worker.escalation_guard import escalation_guard
+
+
+MAX_HISTORY_MESSAGES = 32
+MAX_HISTORY_CHARACTERS = 48_000
 
 
 def _repair_missing_catalog_claim(reply: Optional[str], catalog_results: list[dict[str, Any]]) -> Optional[str]:
@@ -84,8 +93,27 @@ class WorkerOrchestrator:
         self._conversation_history: dict[str, list[dict[str, str]]] = {}
 
     def _history_for(self, conv_id: str) -> list[dict[str, str]]:
-        """Return a bounded, conversation-local history for follow-up turns."""
-        return list(self._conversation_history.get(conv_id, []))[-8:]
+        """Return recent conversation context with message and character bounds."""
+        return self._bounded_history(self._conversation_history.get(conv_id, []))
+
+    @staticmethod
+    def _bounded_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+        recent = history[-MAX_HISTORY_MESSAGES:]
+        if len(recent) % 2:
+            recent = recent[1:]
+        selected: list[dict[str, str]] = []
+        used_chars = 0
+        for index in range(len(recent) - 2, -1, -2):
+            pair = recent[index:index + 2]
+            pair_chars = sum(len(str(message.get("content", ""))) for message in pair)
+            if selected and used_chars + pair_chars > MAX_HISTORY_CHARACTERS:
+                break
+            selected[0:0] = [
+                {"role": message.get("role", "user"), "content": str(message.get("content", ""))}
+                for message in pair
+            ]
+            used_chars += pair_chars
+        return selected
 
     def _remember_turn(self, conv_id: str, user_message: str, assistant_message: str) -> None:
         history = self._conversation_history.setdefault(conv_id, [])
@@ -93,7 +121,7 @@ class WorkerOrchestrator:
             {"role": "user", "content": user_message},
             {"role": "assistant", "content": assistant_message},
         ])
-        del history[:-8]
+        self._conversation_history[conv_id] = self._bounded_history(history)
 
     async def process_turn(
         self,
@@ -352,6 +380,22 @@ class WorkerOrchestrator:
             final_reply = current_resp.content
 
         final_reply = _repair_missing_catalog_claim(final_reply, catalog_detail_results)
+        asks_for_price = any(
+            cue in user_message.lower()
+            for cue in ("price", "cost", "how much", "discount", "stock", "available")
+        )
+        if catalog_detail_results and not asks_for_price:
+            for detail_result in catalog_detail_results:
+                if detail_result.get("found") is not True or not isinstance(detail_result.get("specs"), dict):
+                    continue
+                focused_answer = _focused_product_spec_answer(
+                    str(detail_result.get("name") or "This product"),
+                    detail_result["specs"],
+                    user_message,
+                )
+                if focused_answer:
+                    final_reply = focused_answer
+                    break
 
         latency = round((time.perf_counter() - start_time) * 1000, 2)
 

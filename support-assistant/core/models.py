@@ -131,6 +131,7 @@ class OrderStatus(str, Enum):
     DELIVERED = "Delivered"
     CANCELLED = "Cancelled"
     RETURNED = "Returned"
+    REFUNDED = "Refunded"
     UNKNOWN = "Unknown"
 
 

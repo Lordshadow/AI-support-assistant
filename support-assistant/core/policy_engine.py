@@ -61,7 +61,7 @@ def check_refund_eligibility(
 ) -> tuple[bool, str, int]:
     """
     Pure deterministic eligibility verification:
-    1. Order must be in DELIVERED status.
+    1. Order must be in DELIVERED status and must not already be refunded.
     2. Digital goods and gift cards are strictly non-refundable.
     3. Items cannot be refunded more than once.
     4. Must fall within the return window (30 days from delivery).
@@ -69,6 +69,13 @@ def check_refund_eligibility(
     Returns:
         tuple[is_eligible: bool, policy_reason: str, eligible_amount_inr: int]
     """
+    if order.status == OrderStatus.REFUNDED:
+        return (
+            False,
+            f"Order '{order.order_id}' has already been refunded. No additional refund can be requested.",
+            0,
+        )
+
     if order.status != OrderStatus.DELIVERED:
         return (
             False,

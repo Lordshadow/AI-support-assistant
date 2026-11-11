@@ -92,10 +92,10 @@ describe('RefundsPage Approval Queue (Spec 16.4 Screen 2)', () => {
     }));
     renderRefunds();
     await waitFor(() => expect(screen.getAllByText(/REF-001/).length).toBeGreaterThan(0));
-    fireEvent.click(screen.getByRole('button', { name: /Approve Refund/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Approve and process matched store refund/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Approval' }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/admin/v1/refunds/REF-001/approve', { notes: '' }));
-    expect(await screen.findByText('Refund #REF-001 was successfully approved.')).toBeInTheDocument();
+    expect(await screen.findByText('Refund #REF-001 was approved and synchronized.')).toBeInTheDocument();
   });
 
   it('submits a rejection with the required audit note', async () => {
@@ -108,7 +108,7 @@ describe('RefundsPage Approval Queue (Spec 16.4 Screen 2)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reject Refund' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Rejection' }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/admin/v1/refunds/REF-001/reject', { notes: 'Reviewed item and return reason.' }));
-    expect(await screen.findByText('Refund #REF-001 was successfully rejected.')).toBeInTheDocument();
+    expect(await screen.findByText('Refund #REF-001 was rejected and synchronized.')).toBeInTheDocument();
   });
 
   it('shows only stored eligibility and verification facts in the detail view', async () => {

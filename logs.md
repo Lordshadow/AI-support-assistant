@@ -3047,6 +3047,73 @@
 ### Git Commit:
 - No commit created.
 
+## [Task-99] - Secure OpenWA order tracking and refund access
+**Timestamp:** 2026-11-11 (Asia/Calcutta)
+**Status:** IMPLEMENTED; DEPLOYMENT BLOCKED BY DOCKER DAEMON PERMISSIONS
+**Objective & Rationale ("Why"):**
+- Connect the existing OpenWA inbox to order tracking and refund requests while retaining customer ownership checks and the existing order-specific refund OTP step-up.
+- Allow English, Tamil, and Tanglish text/voice requests through the same assistant path.
+
+**Architectural Boundaries & Modularity:**
+- WhatsApp account binding uses an email OTP delivered by the storefront. The support gateway stores the signed customer token only in the in-memory WhatsApp session, so restarts require customers to re-verify.
+- Storefront API credentials must have `orders:read` scope. Order ownership stays enforced by signed customer tokens; refund submission continues to require the separate order-specific OTP verification token.
+- OpenWA's webhook media inline cap is set to 20 MiB to match assistant voice processing limits.
+
+**Files Touched:**
+- `support-assistant/services/assistant_api/gateway_app.py` (Modified - WhatsApp email-code account binding and localized English/Tamil/Tanglish account prompts).
+- `ecommerce-app/backend/src/assistant-api.js` (Modified - scoped, rate-limited WhatsApp email-code request and verification endpoints).
+- `ecommerce-app/backend/test/storefront.test.js` (Modified - account-code success, invalid-code, credential-scope coverage).
+- `openwa-gateway/.env` (Modified - webhook inline media cap set to 20 MiB; ignored runtime config).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- `node --test --test-name-pattern='assistant API enforces scopes' test/storefront.test.js` - 1/1 passed, including valid code, invalid code, scoped API access, signed identity, and existing refund ownership/idempotency checks.
+- `node --test --test-name-pattern='forwards OpenWA text'` in `whatsapp-openwa` - 1/1 passed.
+- `python -m compileall -q services/assistant_api/gateway_app.py` - passed.
+- Full ecommerce `npm test` - 4/5 tests passed; pre-existing catalog fixture assertion expected 12 products but observed 194.
+- Full OpenWA adapter tests were limited by sandbox loopback `EACCES`; its text-forward test passed independently.
+- Python integration tests could not complete in the available interpreter (pytest is not installed; unittest invocation stalled before output).
+- Docker Compose rebuild was not run: `docker info` returned `permission denied while trying to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine`. No services were restarted, so these code/config changes are not active in running containers yet.
+- No live WhatsApp messages were sent.
+
+**Git Commit:**
+- No commit created.
+
+**Next Planned Task (Awaiting User Permission):**
+- None; deployment can be completed after Docker access is restored.
+
+## [Task-100] - Rebuild WhatsApp support Docker stacks
+**Timestamp:** 2026-11-11 (Asia/Calcutta)
+**Status:** COMPLETE
+**Objective & Rationale ("Why"):**
+- Deploy the WhatsApp account-verification, order-tracking, refund, and voice-media changes by rebuilding the support assistant, OpenWA, and storefront Compose stacks.
+
+**Architectural Boundaries & Modularity:**
+- Rebuilt each existing Compose project. OpenWA was rebuilt using its actual running project configuration (`docker-compose.dev.yml`) after container labels showed it used a persistent SQLite bind mount; this preserved the linked session data.
+- No live WhatsApp message was sent.
+
+**Files Touched:**
+- `logs.md` (Modified - recorded deployment and health checks).
+- Docker images/containers for `customersupportproject`, `openwa-gateway`, and `ecommerce-app` (Rebuilt/recreated).
+
+**Verification & Quality Assurance:**
+- Docker access check succeeded through elevated execution (Docker Engine 29.9.2).
+- Support assistant API, dashboard, outbox worker, Postgres, and Redis reported healthy.
+- OpenWA API reported healthy; session `support-bot` reported `ready`.
+- OpenWA container reported `WEBHOOK_MEDIA_INLINE_MAX_BYTES=20971520`.
+- Storefront backend reported healthy; frontend running.
+- Assistant health endpoint returned `healthy`; storefront API returned `online`.
+- From inside the assistant container, `http://host.docker.internal:5000/api/assistant/v1/health` returned HTTP 200.
+- OpenWA adapter port 2786 accepted TCP connections.
+- OpenWA's first production-compose attempt conflicted with its existing `openwa-api` container because the running installation uses `docker-compose.dev.yml`; the exact existing dev project was then rebuilt successfully without replacing its data mount.
+- Storefront image build succeeded. The first Compose start encountered a Docker removal-in-progress race; after inspecting state, a second `docker compose up -d` started the frontend and backend successfully.
+
+**Git Commit:**
+- No commit created.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
 ### Next Planned Task (Awaiting User Permission):
 - [ ] Select the next implementation, review, testing, or cleanup task.
 
@@ -3470,7 +3537,7 @@
 
 ## [Task-60] - Verify Customer Support Widget Workflows
 **Timestamp:** 2026-11-10 00:00:00 (IST)  
-**Status:** IN-PROGRESS  
+**Status:** VERIFIED WITH LIVE WHATSAPP INGRESS UNCONFIRMED  
 **Objective & Rationale ("Why"):**  
 - Verify customer chat, order/product context, tenant presentation settings, authenticated requests, OTP verification, formatted replies, and recoverable errors against the requested acceptance criteria.
 
@@ -4277,3 +4344,328 @@ ode --check support-assistant/static/widget/v1/widget.js passed (JavaScript synt
 - Copied the existing storefront `REFUND_SYNC_SECRET` into support project's `.env` as `APEXSTORE_REFUND_SYNC_SECRET`; secret value was not printed. Existing sync URL already targets `/api/integrations/refunds/review`.
 - Recreated assistant-api. Verified in-memory SHA-256 equality of storefront and assistant secret values, URL/config presence, healthy container, and `/health` 200.
 - Read-only state check: assistant refund `REF-DDDE036F` remains `pending_approval`; storefront refund #8 remains `Requested`. No approval was submitted.
+
+## [Task-93] - Improve product sales assistance and chat context
+**Timestamp:** 2026-11-10 23:49 +05:30
+**Status:** IMPLEMENTED; CONTAINER REBUILD BLOCKED
+- Created requested checkpoint commits before these changes: support project `04d1596`; newly initialized local e-commerce repository `bbcf7ca`.
+- Updated orchestrator guidance for consultative, senior-sales product answers grounded in exact product details and product documentation; clarified catalog retrieval tool descriptions.
+- Increased retained conversation history from 8 messages to up to 32 messages (16 exchanges), with a 48,000-character bound.
+- Improved mock fallback product retrieval and removed an outdated hard-coded price statement.
+- Python syntax compilation passed. Docker rebuild/health verification could not run because the Docker Desktop engine named pipe was unavailable. Automated tests were not run.
+
+## [Task-94] - Synchronize computer catalog and repair widget product lookup
+**Timestamp:** 2026-11-11 00:20 +05:30
+**Status:** COMPLETE
+- Added an explicit manager/admin `allow_large_catalog_decrease` sync option so a deliberate, audited catalog replacement can bypass the 20% deletion guard.
+- Synced 12 storefront products into catalog version `ver_cat_33887dab2b9b`; 12 added, 194 removed, 0 failures, 85 chunks indexed.
+- All 3 pre-promotion checks passed (catalog count, retrieval/index integrity, product isolation). Promoted the new catalog version to active.
+- Live widget smoke request for storefront product `4727` returned Lenovo LOQ manufacturer specs and FAQs instead of “Product not found.”
+- Storefront backend rebuilt and healthy. SQLite retained 11 orders and 8 return requests; the catalog contains 12 products from ₹699 to ₹1,30,991.
+- No automated test suite run.
+
+## [Task-95] - Improve product follow-up conversations
+**Timestamp:** 2026-11-11 00:25 +05:30
+**Status:** COMPLETE
+- Root cause: the deterministic fallback router did not recognize “core” as a product-spec topic. Even though the widget sent product ID `4728` with every message, that follow-up fell through to the generic support menu.
+- Updated `support-assistant/services/worker/llm_client.py` to route core/CPU and other common spec follow-ups through the active product context, answer the requested spec concisely from structured catalog data, and give product overviews in a more natural summary format.
+- Updated `support-assistant/prompts/orchestrator_system_prompt.md` with explicit guidance for short, typo-prone, pronoun-based product follow-ups and focused one-to-two sentence answers.
+- Verification: `python -m py_compile support-assistant/services/worker/llm_client.py` passed; `git diff --check` reported no whitespace errors; rebuilt assistant API and confirmed it is healthy.
+- Live multi-turn widget check: “Tell me about this product” returned a concise Acer Nitro V 15 overview; “how much core dose it have” correctly answered “6 cores” and named the Ryzen 5 7535HS processor.
+- Automated test suites were not run.
+
+## [Task-96] - Configure OpenWA WhatsApp request integration
+**Timestamp:** 2026-11-11 00:35 +05:30
+**Status:** IMPLEMENTED; OPENWA ACCOUNT SETUP PENDING
+**Objective & Rationale ("Why"):**
+- Connected the support assistant WhatsApp request flow to the user-provided `rmyndharis/OpenWA` gateway. Replaced the prior companion dependency on the separate `@open-wa/wa-automate` project.
+
+**Architectural Boundaries & Modularity:**
+- Kept Meta Cloud webhook handling intact. The local adapter verifies OpenWA's signed raw webhook, filters direct incoming messages, forwards normalized text/voice data through the assistant's authenticated route, then sends the returned answer using the OpenWA REST API.
+- Added cached duplicate replies in the assistant route and OpenWA send idempotency keys so webhook retries can safely complete outbound replies.
+
+**Files Touched:**
+- `.env.example` (documented OpenWA secrets and connection settings).
+- `.env` (added a generated webhook signing secret and unset API key/session placeholders; ignored by Git).
+- `whatsapp-openwa/README.md`, `package.json`, `package-lock.json`, `src/index.js`, `src/bridge.js`, `test/bridge.test.js` (switched to official OpenWA webhook and REST integration).
+- `whatsapp-openwa/src/qr.js` (removed unused QR helper from the old embedded client).
+- `support-assistant/services/assistant_api/gateway_app.py` (cache duplicate OpenWA responses for retry-safe replies).
+
+**Verification & Quality Assurance:**
+- `node --check src/index.js` and `node --check src/bridge.js`: passed.
+- Parsed `package.json` and `package-lock.json`: passed.
+- `python -m py_compile support-assistant/services/assistant_api/gateway_app.py`: passed.
+- `git diff --check`: no source whitespace issues; the Markdown hard-break whitespace in this log entry was removed after the first check.
+- Automated tests and live WhatsApp messages were not run. OpenWA API key, session ID, linked device, and webhook registration remain to be supplied/configured after OpenWA is started.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-102] - Commit WhatsApp voice integration and ignore local gateway clone
+**Timestamp:** 2026-11-11 02:24 +05:30  
+**Status:** COMPLETE  
+**Objective & Rationale ("Why"):**
+- Commit the OpenWA-to-assistant voice message process requested by the user and prevent the separate local OpenWA source clone from appearing as untracked content in the support project.
+
+**Architectural Boundaries & Modularity:**
+- Stage only the OpenWA adapter, assistant voice integration, associated configuration/documentation/tests, and the root ignore rule. Preserve unrelated working tree edits.
+
+**Files Touched:**
+- `.gitignore` (Modified - ignore the separate `/openwa-gateway/` local checkout).
+- `.env.example`, `support-assistant/services/assistant_api/gateway_app.py`, `support-assistant/tests/test_ai_mcp_and_voice_pipeline.py`, `support-assistant/tests/test_assistant_api.py` (Committed - OpenWA voice processing configuration, replay behavior, and integration coverage).
+- `whatsapp-openwa/README.md`, `package.json`, `package-lock.json`, `src/bridge.js`, `src/index.js`, `src/qr.js`, `test/bridge.test.js` (Committed - signed webhook adapter, assistant forwarding, and adapter verification; removed obsolete QR pairing client/dependencies).
+- Other existing dashboard and assistant edits remain unstaged and unchanged.
+
+**Verification & Quality Assurance:**
+- `git diff --cached --check` passed before commit.
+- `git check-ignore -v openwa-gateway/` confirmed the local upstream clone is ignored.
+- Verified after commit that only unrelated changes plus `logs.md` remain modified; no untracked OpenWA clone appears.
+
+**Git Commit:**
+- `d28e09a feat(whatsapp): route OpenWA voice notes to support assistant`
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-97] - Deploy OpenWA and connect the linked WhatsApp session
+**Timestamp:** 2026-11-11 00:57 +05:30
+**Status:** RUNNING; WEBHOOK ACTIVE
+**Objective & Rationale ("Why"):**
+- Complete the OpenWA setup after the user linked WhatsApp in the dashboard by connecting the ready session to the support assistant.
+
+**Architectural Boundaries & Modularity:**
+- Cloned the official OpenWA repository into `openwa-gateway` and started its documented Docker Compose development stack. Kept OpenWA's API key in the ignored support-project `.env` and did not display it.
+- Allowed only `host.docker.internal` through OpenWA's webhook SSRF hostname allowlist so the container can call the host adapter.
+- Registered a signed `message.received` webhook to `http://host.docker.internal:2786/webhooks/openwa` and started the adapter as a hidden host process.
+
+**Files Touched:**
+- `openwa-gateway` (cloned official repository; local untracked checkout).
+- `openwa-gateway/.env` (local SSRF allowlist for the adapter callback; ignored by Git).
+- `.env` (saved the OpenWA API key/session ID and integration URL/port; ignored by Git).
+- `logs.md` (this entry).
+
+**Verification & Quality Assurance:**
+- OpenWA session `support-bot` reported `ready`; OpenWA container health is `healthy` and dashboard root returned HTTP 200.
+- Assistant `/health` returned HTTP 200.
+- OpenWA returned an active webhook registration for `message.received`; signing secret was not returned by OpenWA.
+- OpenWA container reached the adapter host successfully (adapter root returned HTTP 404 as expected for an unregistered route).
+- No WhatsApp message was sent. No live assistant reply was triggered.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-98] - Create refund update template in OpenWA
+**Timestamp:** 2026-11-11 01:04 +05:30
+**Status:** COMPLETE
+**Objective & Rationale ("Why"):**
+- Create the `refund_update_v1` template referenced by the support assistant's refund notification flow.
+
+**Architectural Boundaries & Modularity:**
+- Stored a session-scoped OpenWA text template using the existing `order_id` and `amount_inr` placeholder names. This is OpenWA's renderable text template, not a Meta-approved WhatsApp Business template.
+
+**Files Touched:**
+- OpenWA runtime template store (created `refund_update_v1` for session `9abe5a4f-fb16-4e6e-89a5-976728022da8`; no repository source changed).
+- `logs.md` (this entry).
+
+**Verification & Quality Assurance:**
+- OpenWA API returned the created template ID `21002f38-c762-40e9-8e1f-a307e0e254aa` with the expected body and session ID.
+- No WhatsApp message was sent. Existing refund notifications are not automatically routed through OpenWA's `send-template` endpoint by this template creation alone.
+
+**Git Commit:**
+- No source commit; template is stored in OpenWA.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+## [Task-98] - End-to-end widget and dashboard workflow validation
+**Timestamp:** 2026-11-11 01:05 +05:30
+**Status:** COMPLETE WITH ONE KNOWN GAP
+- Validated widget product overview and focused specification follow-ups against live product `4728`; API responds with the exact 6-core CPU fact. Assistant health and widget script return HTTP 200.
+- Full support suite: 255 passed, 3 skipped; 12 subtests passed. Dashboard unit suite: 32 passed. Dashboard browser E2E: 6 passed, 1 skipped because the refund schema does not store requester identity for self-approval checks.
+- Storefront backend suite: 5 passed using an isolated seeded SQLite database. Covered catalog, customer auth/OTP/password recovery, guest/account orders and tracking, return eligibility windows, refund idempotency, and test-provider safety. No sample rows were written to the live storefront database by this suite.
+- Storefront and dashboard production builds succeeded. Live checks confirmed 12 products, specs/FAQs, dashboard reports/refunds/conversations/knowledge endpoints, and all seven Compose services running healthy/up.
+- Observed a Groq 429 daily token limit; the assistant fell back to its deterministic adapter and still answered the product follow-up correctly.
+- QA fixes: updated stale catalog test/docs, made refund decision banners identify approve vs reject, removed exception text from chat error logs, fixed HTTP test fakes and cached replay expectations, and made focused spec answers independent of model phrasing.
+- Remaining gap: reliable server-side self-approval prevention requires requester identity to be persisted and returned.
+- No commit created.
+
+\n
+## [Task-101] - Validate WhatsApp voice note transcription path
+**Timestamp:** 2026-11-11 02:15 +05:30  
+**Status:** VERIFIED WITH LIVE WHATSAPP INGRESS UNCONFIRMED  
+**Objective & Rationale ("Why"):**
+- Verify that a real `.m4a` voice recording can be transcribed through the same Groq Whisper service configured for incoming OpenWA voice notes, after the user explicitly authorized sending this recording to the project's configured provider.
+
+**Architectural Boundaries & Modularity:**
+- Exercise the existing Groq Whisper adapter without sending a WhatsApp message or changing project source/runtime configuration.
+
+**Files Touched:**
+- `logs.md` (Modified - recorded the active verification task).
+
+**Verification & Quality Assurance:**
+- Sent `Recording.m4a` through the running assistant's authenticated `/integrations/openwa/messages` voice route using a synthetic sender; HTTP 200, status `processed`, transcript `What is the last product I ordered?`, and a safe sign-in prompt returned. No WhatsApp message was sent.
+- Ran an isolated OpenWA bridge audio-forwarding check with the recording bytes; verified voice type, MIME type and base64 were preserved and that the outgoing WhatsApp API call was stubbed.
+- `node --test --test-name-pattern='forwards OpenWA text'`: 1/1 passed.
+- Attempted the focused assistant unittest `test_openwa_voice_pipeline_decrypt_transcribe_and_reply`; the local process hung without output and was interrupted. The live assistant endpoint check above exercised the same authenticated voice-processing route successfully.
+- Live WhatsApp ingress remains unconfirmed: the prior OpenWA message history check returned no inbound messages. No actual WhatsApp message was sent during this verification.
+
+**Git Commit:**
+- No source changes or commit planned.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+
+## [Task-103] - Diagnose WhatsApp messages receiving no reply
+**Timestamp:** 2026-11-11 02:45 +05:30  
+**Status:** DIAGNOSED; RUNTIME UNAVAILABLE  
+**Objective & Rationale ("Why"):**  
+- Trace the configured OpenWA message path to explain why an incoming WhatsApp message gets no assistant reply.
+
+**Architectural Boundaries & Modularity:**
+- Read-only inspection of the OpenWA adapter, assistant integration endpoint, runtime configuration presence, process state, and local service ports. No source or runtime configuration was changed.
+
+**Files Touched:**
+- `logs.md` (Modified - appended this diagnostic record).
+
+**Verification & Quality Assurance:**
+- Root `.env` has non-empty OpenWA shared secret, webhook secret, API key, session ID, assistant URL, and API URL; secret values were not displayed.
+- Ports 2785 (OpenWA), 2786 (webhook adapter), and 8000 (assistant API) are not listening. No node, Python, or Docker processes were present.
+- `docker compose ps` could not connect to Docker Desktop (`dockerDesktopLinuxEngine` permission denied), so runtime startup/status could not be checked through Compose.
+- Code path confirms adapter must forward each signed webhook to assistant API and then call OpenWA `messages/send-text`; with all three services offline this flow cannot reply.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-104] - Restore WhatsApp reply runtime
+**Timestamp:** 2026-11-11 08:40 +05:30  
+**Status:** RESTORED; READY FOR LIVE MESSAGE CHECK  
+**Objective & Rationale ("Why"):**  
+- Restore the WhatsApp message path after discovering that the local OpenWA webhook adapter was not running.
+
+**Architectural Boundaries & Modularity:**
+- Started the existing assistant Compose stack and OpenWA development gateway. Restarted the existing Node adapter as a hidden host process using the configured root .env. No source code or secrets were changed.
+
+**Files Touched:**
+- logs.md (Modified - appended this recovery record).
+
+**Verification & Quality Assurance:**
+- Assistant API container reports healthy; GET /health returned HTTP 200.
+- OpenWA API container reports healthy; dashboard root returned HTTP 200; configured session reports eady.
+- OpenWA still has one webhook registered for http://host.docker.internal:2786/webhooks/openwa.
+- Adapter started and logs OpenWA webhook adapter listening on port 2786.
+- From inside the OpenWA container, the adapter callback returned HTTP 404 on GET (route is POST-only, confirming host-container reachability). Unsigned POST returned HTTP 401, confirming signature enforcement.
+- No customer message was sent as part of verification.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-105] - Format WhatsApp replies as message cards
+**Timestamp:** 2026-11-11 09:35 +05:30  
+**Status:** IMPLEMENTED; ADAPTER RESTARTED  
+**Objective & Rationale ("Why"):**  
+- Improve readability of WhatsApp support replies after the screenshot showed Markdown order tables being delivered as raw pipe-delimited text.
+
+**Architectural Boundaries & Modularity:**
+- Added formatting only in the OpenWA outbound adapter, preserving the existing assistant response and web chat rendering. Markdown tables become compact labeled order cards; headings, bullets, and bold text are converted to WhatsApp-friendly formatting.
+
+**Files Touched:**
+- whatsapp-openwa/src/bridge.js (Modified - format assistant text before sending through OpenWA).
+- logs.md (Modified - appended this implementation record).
+
+**Verification & Quality Assurance:**
+- 
+ode --check src/bridge.js passed.
+- Restarted the webhook adapter with the updated formatter; adapter signature guard returned HTTP 401 to an unsigned request as expected.
+- No customer message was sent for verification; automated tests were not run.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-106] - Recognize already-refunded orders
+**Timestamp:** 2026-11-11 10:18 +05:30  
+**Status:** IMPLEMENTED AND DEPLOYED  
+**Objective & Rationale ("Why"):**  
+- Fix refund replies that treated the storefront's Refunded order status as Unknown, despite the order being delivered and refunded.
+
+**Architectural Boundaries & Modularity:**
+- Added Refunded to the canonical order status enum so storefront status mapping preserves it. The deterministic refund eligibility policy now explicitly rejects another refund for a refunded order with a clear reason. No database migration was needed because status is stored as text.
+
+**Files Touched:**
+- support-assistant/core/models.py (Modified - added canonical Refunded status).
+- support-assistant/core/policy_engine.py (Modified - report already-refunded orders before the delivered-order eligibility check).
+- logs.md (Modified - appended this implementation record).
+
+**Verification & Quality Assurance:**
+- docker compose up -d --build completed successfully.
+- Rebuilt assistant container is healthy; /health returned HTTP 200.
+- Runtime container imports OrderStatus.REFUNDED as Refunded.
+- Automated tests were not run.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-107] - Ignore generated test artifacts
+**Timestamp:** 2026-11-11 10:22 +05:30  
+**Status:** COMPLETE  
+**Objective & Rationale ("Why"):**  
+- Keep disposable test-run and tooling outputs out of Git status without hiding maintainable test source files.
+
+**Architectural Boundaries & Modularity:**
+- Added root ignore rules for common Python caches, coverage outputs, and browser test result folders. Existing rules already cover the generated concurrency database and logs. Test source remains trackable.
+
+**Files Touched:**
+- .gitignore (Modified - added generated test and tooling artifact patterns).
+- logs.md (Modified - appended this task record).
+
+**Verification & Quality Assurance:**
+- git check-ignore -v matched the existing concurrency database rule and new pytest cache, coverage, and test-results patterns.
+- Confirmed support-assistant/tests/test_core_policy.py is not ignored.
+- Automated tests were not run.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.
+
+## [Task-108] - Correct widget embed instructions
+**Timestamp:** 2026-11-11 10:34 +05:30  
+**Status:** IMPLEMENTED AND DEPLOYED  
+**Objective & Rationale ("Why"):**  
+- Make the dashboard's copied widget snippet load the actual served asset and point requests at the assistant API origin.
+
+**Architectural Boundaries & Modularity:**
+- Updated only the dashboard embed generator. The widget continues to call the assistant API; no direct store-database credentials are exposed to the browser. Store data remains a backend connector responsibility.
+
+**Files Touched:**
+- master-dashboard/src/pages/ScriptsPage.tsx (Modified - correct widget asset path, use the current tenant, add configurable API base URL, and explain production origin requirements).
+- logs.md (Modified - appended this implementation record).
+
+**Verification & Quality Assurance:**
+- docker compose up -d --build completed and the dashboard build finished successfully (	sc and Vite production build).
+- Dashboard serves /widget/v1/widget.js with HTTP 200; assistant /health returns HTTP 200.
+- Automated tests were not run.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- None.

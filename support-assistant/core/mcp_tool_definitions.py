@@ -35,8 +35,8 @@ MCP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "find_product",
             "description": (
-                "Search product catalog by name or colloquial phrasing to retrieve canonical product_ids. "
-                "Use this when customer mentions a product name to resolve the exact model."
+                "Resolve a customer's exact product/model name or colloquial phrasing to canonical product IDs. "
+                "Use before product-specific retrieval when the current validated page context does not already identify the exact model; clarify if multiple variants match."
             ),
             "parameters": {
                 "type": "object",
@@ -74,7 +74,7 @@ MCP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_product_details",
-            "description": "Fetch exact technical specifications (battery life, weight, connectivity, dimensions) for a product_id.",
+            "description": "Fetch the complete structured specification record for the exact product ID, including available technical features, dimensions, capacity, materials, and compatibility fields. Use for product questions and never infer missing values.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,7 +91,7 @@ MCP_TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_product_docs",
-            "description": "Retrieve semantic knowledge, user manuals, and FAQs strictly restricted to the specified product_id.",
+            "description": "Search the exact product's manuals, FAQs, usage, compatibility, troubleshooting, and other product-specific documentation. Use the customer's actual question as the query; keep retrieval scoped to this product ID. For product questions, use alongside get_product_details when both structured specs and explanatory guidance are useful.",
             "parameters": {
                 "type": "object",
                 "properties": {

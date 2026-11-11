@@ -79,19 +79,26 @@ class TestRefundDashboard(unittest.TestCase):
         self.assertTrue(result[0]["order_items"][0]["returnable"])
 
     def test_approval_succeeds_for_current_model_without_requester_column(self):
-        refund = SimpleNamespace(refund_id="REF-QA-2", tenant_id="tenant-a", state="pending_approval", amount_inr=2500)
+        refund = SimpleNamespace(
+            refund_id="REF-QA-2", tenant_id="tenant-a", order_id="ORD-QA-2",
+            state="pending_approval", amount_inr=2500,
+        )
         fetch_result, update_result = MagicMock(), MagicMock(rowcount=1)
         fetch_result.scalars.return_value.first.return_value = refund
         session = SimpleNamespace(execute=AsyncMock(side_effect=[fetch_result, update_result]), add=MagicMock())
         staff = SimpleNamespace(tenant_id="tenant-a", staff_id="manager-1", role="manager", is_stepped_up=False)
 
-        with patch.object(refunds, "get_async_session", return_value=_SessionContext(session)):
+        store_review = AsyncMock(return_value={"success": True, "store_refund_id": 17})
+        with patch.object(refunds, "get_async_session", return_value=_SessionContext(session)), patch.object(
+            refunds, "_review_store_refund", store_review
+        ):
             response = _run_sync(refunds._decide("REF-QA-2", "approved", refunds.RefundDecision(notes="Reviewed"), staff))
 
         self.assertTrue(response["success"])
-        self.assertEqual(response["state"], "approved")
+        self.assertEqual(response["state"], "processed")
         self.assertEqual(session.execute.await_count, 2)
         session.add.assert_called_once()
+        store_review.assert_awaited_once_with(refund, "approved", "Reviewed")
 
 
 if __name__ == "__main__":

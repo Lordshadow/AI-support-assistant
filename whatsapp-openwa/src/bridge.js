@@ -27,6 +27,65 @@ function getAudioBase64(media) {
   return match?.[1];
 }
 
+function splitMarkdownTableRow(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|') || !trimmed.endsWith('|')) return null;
+  return trimmed.slice(1, -1).split('|').map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line) {
+  const cells = splitMarkdownTableRow(line);
+  return cells?.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function renderMarkdownTable(lines, start) {
+  const headers = splitMarkdownTableRow(lines[start]);
+  if (!headers || !isMarkdownTableSeparator(lines[start + 1] || '')) return null;
+
+  let end = start + 2;
+  const records = [];
+  while (end < lines.length) {
+    const cells = splitMarkdownTableRow(lines[end]);
+    if (!cells || cells.length !== headers.length) break;
+    records.push(cells);
+    end += 1;
+  }
+  if (!records.length) return null;
+
+  const idIndex = headers.findIndex((header) => /^(order\s*id|id)$/i.test(header.replaceAll('*', '').trim()));
+  const cardLines = records.map((record) => {
+    const values = headers.map((header, index) => ({
+      label: header.replaceAll('*', '').trim(),
+      value: record[index].replaceAll('**', '').trim(),
+    })).filter(({ value }, index) => value && index !== idIndex);
+    const orderId = idIndex >= 0 ? record[idIndex].replaceAll('**', '').trim() : '';
+    const lines = [orderId ? `*${orderId}*` : 'Order details'];
+    for (const { label, value } of values) lines.push(`${label}: ${value}`);
+    return lines.join('\n');
+  });
+  return { text: cardLines.join('\n\n'), nextIndex: end };
+}
+
+export function formatWhatsAppMessage(message) {
+  if (typeof message !== 'string') return '';
+  const lines = message.replace(/\r\n?/g, '\n').split('\n');
+  const formatted = [];
+  for (let index = 0; index < lines.length;) {
+    const table = renderMarkdownTable(lines, index);
+    if (table) {
+      formatted.push(table.text);
+      index = table.nextIndex;
+      continue;
+    }
+    formatted.push(lines[index]
+      .replace(/^\s{0,3}#{1,6}\s+(.+)$/, '*$1*')
+      .replace(/^\s*[-+]\s+/, '• ')
+      .replace(/\*\*(.+?)\*\*/g, '*$1*'));
+    index += 1;
+  }
+  return formatted.join('\n').trim();
+}
+
 export async function processOpenWaEvent(event, config, fetchImpl = fetch) {
   if (event?.event !== 'message.received' || !event.data || typeof event.data !== 'object') {
     return { ignored: true };
@@ -72,7 +131,7 @@ export async function processOpenWaEvent(event, config, fetchImpl = fetch) {
           'Idempotency-Key': String(event.idempotencyKey || messageId).slice(0, 256),
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ chatId: sender, text: result.reply }),
+        body: JSON.stringify({ chatId: sender, text: formatWhatsAppMessage(result.reply) }),
         signal: AbortSignal.timeout(30_000),
       },
     );

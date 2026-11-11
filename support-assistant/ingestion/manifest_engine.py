@@ -358,6 +358,7 @@ class KnowledgeManifestEngine:
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         staff_role: str = "manager",
         retry_product_ids: Optional[list[str]] = None,
+        allow_large_catalog_decrease: bool = False,
     ) -> IngestionJob:
         """Fetch, validate, incrementally embed, and stage a catalog draft."""
         stmt_active = select(IngestionJob).where(
@@ -410,10 +411,10 @@ class KnowledgeManifestEngine:
             run.logs = [*(run.logs or []), safe_event]
             logger.info(json.dumps(safe_event, ensure_ascii=False, separators=(",", ":")))
 
-        log_event("run_started")
+        log_event("run_started", allow_large_catalog_decrease=allow_large_catalog_decrease)
         session.add(AuditEvent(tenant_id=tenant_id, actor_id=staff_id, actor_role=staff_role,
             action="catalog_sync_started", resource_type="ingestion_job", resource_id=job.job_id,
-            details={"run_id": run.run_id}))
+            details={"run_id": run.run_id, "allow_large_catalog_decrease": allow_large_catalog_decrease}))
         await session.flush()
         report_progress()
         total_api_latency_ms = 0.0
@@ -486,7 +487,7 @@ class KnowledgeManifestEngine:
             await session.flush()
             report_progress()
 
-            if previous_items > 0 and not retry_ids:
+            if previous_items > 0 and not retry_ids and not allow_large_catalog_decrease:
                 drop_ratio = (previous_items - new_items) / previous_items
                 if drop_ratio > 0.20:
                     job.status = "failed"

@@ -94,6 +94,8 @@ class StorefrontRefundIntegrationTests(unittest.TestCase):
                 return {"refund": {"id": 17, "amount": 607.38, "status": "Processed"}}
 
         class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
             async def __aenter__(self):
                 return self
             async def __aexit__(self, *_args):

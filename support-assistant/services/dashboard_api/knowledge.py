@@ -37,7 +37,8 @@ logger = __import__("logging").getLogger(__name__)
 
 
 async def _run_catalog_ingestion(tenant_id: str, staff_id: str, job_id: str, staff_role: str = "manager",
-                                 retry_product_ids: Optional[List[str]] = None):
+                                 retry_product_ids: Optional[List[str]] = None,
+                                 allow_large_catalog_decrease: bool = False):
     """Run import outside the request transaction and persist progress for polling."""
     def update_progress(progress: Dict[str, Any]):
         catalog_job_progress[job_id] = progress
@@ -52,6 +53,7 @@ async def _run_catalog_ingestion(tenant_id: str, staff_id: str, job_id: str, sta
                 progress_callback=update_progress,
                 staff_role=staff_role,
                 retry_product_ids=retry_product_ids,
+                allow_large_catalog_decrease=allow_large_catalog_decrease,
             )
     except Exception as exc:
         is_cancelled = (
@@ -119,6 +121,10 @@ class CreatePolicyDraftRequest(BaseModel):
 
 class CatalogSyncRequest(BaseModel):
     products: Optional[List[Dict[str, Any]]] = None
+    allow_large_catalog_decrease: bool = Field(
+        default=False,
+        description="Explicit manager/admin approval to replace an active catalog with fewer than 80% of its prior products.",
+    )
 
 
 class PromoteVersionRequest(BaseModel):
@@ -201,6 +207,7 @@ async def sync_catalog(
     Triggers catalog ingestion. Enforces 1 active job per tenant and Deletion Guard.
     """
     products_override = payload.products if payload else None
+    allow_large_catalog_decrease = bool(payload and payload.allow_large_catalog_decrease)
     if products_override is None:
         job = None
         try:
@@ -226,7 +233,10 @@ async def sync_catalog(
                     tenant_id=staff.tenant_id, status="queued", stats={}, errors=[], logs=[]))
         except IntegrityError:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A catalog import is already running.")
-        background_tasks.add_task(_run_catalog_ingestion, staff.tenant_id, staff.staff_id, job.job_id, staff.role)
+        background_tasks.add_task(
+            _run_catalog_ingestion, staff.tenant_id, staff.staff_id, job.job_id,
+            staff.role, None, allow_large_catalog_decrease,
+        )
         return {"job_id": job.job_id, "run_id": f"run_{job.job_id}", "tenant_id": job.tenant_id,
                 "status": job.status, "progress_pct": job.progress_pct, "error_message": None, "stats": job.stats}
 
@@ -238,6 +248,7 @@ async def sync_catalog(
                 session=session,
                 products_override=products_override,
                 staff_role=staff.role,
+                allow_large_catalog_decrease=allow_large_catalog_decrease,
             )
             return {
                 "job_id": job.job_id,

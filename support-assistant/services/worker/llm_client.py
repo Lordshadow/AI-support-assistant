@@ -24,6 +24,92 @@ def _format_inr_amount(value: Any) -> str:
         return ""
     return f"₹{amount:,.2f}"
 
+
+def _focused_product_spec_answer(
+    product_name: str,
+    specs: dict[str, Any],
+    question: str,
+) -> Optional[str]:
+    """Answer a focused product follow-up from its matching catalog specification."""
+    text = question.lower()
+    topic_fields = (
+        (("core", "cores", "cpu", "processor"), ("processor", "cpu", "core"), "processor"),
+        (("ram", "memory"), ("memory", "ram"), "memory"),
+        (("storage", "ssd", "drive", "capacity"), ("storage", "ssd", "drive", "capacity"), "storage"),
+        (("display", "screen", "resolution", "refresh rate"), ("display", "screen", "resolution", "refresh"), "display"),
+        (("graphics", "gpu", "video card"), ("graphics", "gpu", "video"), "graphics"),
+        (("battery", "battery life"), ("battery", "capacity"), "battery"),
+        (("port", "ports", "usb", "hdmi"), ("port", "usb", "hdmi"), "ports"),
+        (("warranty", "guarantee"), ("warranty", "guarantee"), "warranty"),
+        (("weight", "heavy", "light"), ("weight", "mass"), "weight"),
+        (("dimension", "size", "thick"), ("dimension", "size", "thickness"), "dimensions"),
+    )
+    selected: Optional[tuple[str, str]] = None
+    for cues, field_cues, label in topic_fields:
+        if any(re.search(rf"\b{re.escape(cue)}\b", text) for cue in cues):
+            selected = (label, "|".join(field_cues))
+            break
+    if selected is None:
+        return None
+
+    label, field_pattern = selected
+    for field, value in specs.items():
+        field_text = str(field).lower().replace("_", " ")
+        value_text = str(value).strip()
+        if not value_text:
+            continue
+        if any(re.search(rf"\b{cue}\b", field_text) for cue in field_pattern.split("|")):
+            if label == "processor":
+                core_match = re.search(r"\b(\d+)\s*[- ]?cores?\b", value_text, re.I)
+                if core_match:
+                    processor_name = re.split(r",\s*\d+\s*[- ]?cores?\b", value_text, maxsplit=1, flags=re.I)[0].strip()
+                    return f"The **{product_name}** has **{core_match.group(1)} cores**, using the **{processor_name}** processor."
+                return f"The listed processor for **{product_name}** is **{value_text}**, but the catalog does not specify its core count."
+            return f"For **{product_name}**, the listed {label} specification is **{value_text}**."
+    return f"I couldn’t find a {label} specification for **{product_name}** in the product listing."
+
+
+def _product_overview_answer(product_name: str, specs: dict[str, Any]) -> Optional[str]:
+    """Build a compact, customer-friendly overview from verified catalog fields."""
+    preferred_fields = (
+        ("Processor", ("processor", "cpu")),
+        ("Graphics", ("graphics", "gpu")),
+        ("Memory", ("memory", "ram")),
+        ("Storage", ("storage", "ssd", "drive")),
+        ("Display", ("display", "screen")),
+    )
+    selected: list[tuple[str, str]] = []
+    normalized_specs = [(str(key).lower().replace("_", " "), str(value).strip()) for key, value in specs.items()]
+    for label, cues in preferred_fields:
+        match = next((
+            (label, value) for key, value in normalized_specs
+            if value and any(re.search(rf"\b{re.escape(cue)}\b", key) for cue in cues)
+        ), None)
+        if match:
+            selected.append(match)
+        if len(selected) == 5:
+            break
+    if not selected:
+        return None
+
+    selected_by_label = dict(selected)
+    processor = selected_by_label.get("Processor")
+    graphics = selected_by_label.get("Graphics")
+    if processor and graphics:
+        overview = f"**{product_name}** pairs **{processor}** with **{graphics}**."
+        supporting = [
+            f"**{label.lower()}:** {value}"
+            for label, value in selected
+            if label not in ("Processor", "Graphics")
+        ]
+        if supporting:
+            overview += " The listing also includes " + ", ".join(supporting) + "."
+    else:
+        overview = f"**{product_name}** is listed with " + "; ".join(
+            f"**{label.lower()}:** {value}" for label, value in selected
+        ) + "."
+    return overview + " If you share what you’ll use it for, I can help assess whether this configuration fits."
+
 try:
     from openai import AsyncOpenAI
 except ImportError:
@@ -202,19 +288,39 @@ class MockLLMClient:
         system_text = str(messages[0].get("content", ""))
         product_context = re.search(r"Product ID: ([A-Z0-9][A-Z0-9_-]{0,63})", system_text)
         order_context = re.search(r"Order ID: (ORD-[-A-Za-z0-9]+)", system_text)
-        asks_specs = any(word in user_text for word in (
-            "battery", "feature", "spec", "warranty", "pair", "connect",
-            "water", "display", "sensor", "this product", "this item"
-        ))
-        if product_context and asks_specs:
+        asks_product_info = any(word in user_text for word in (
+            "about", "tell me", "overview", "key details", "feature", "spec",
+            "battery", "warranty", "pair", "connect", "water", "display",
+            "sensor", "compatible", "compatibility", "work with", "use it",
+            "does it", "does ", "can it", "can ", "is it", "has ", "support",
+            "include", "this product", "this item", "this device", "core", "cpu",
+            "processor", "ram", "memory", "storage", "ssd", "graphics", "gpu",
+            "screen", "resolution", "refresh rate", "ports", "weight", "dimensions",
+        )) or bool(re.search(r"\bhow\s+(?:many|much)\b", user_text))
+        asks_price = any(word in user_text for word in ("price", "cost", "discount", "stock", "available", "availability"))
+        if product_context and (asks_product_info or asks_price):
             product_id = product_context.group(1).upper()
-            return LLMResponse(
-                content=None,
-                tool_calls=[ToolCall(
+            calls = [
+                ToolCall(
                     call_id="call_page_product_details",
                     name="get_product_details",
                     arguments={"product_id": product_id},
-                )],
+                ),
+                ToolCall(
+                    call_id="call_page_product_docs",
+                    name="search_product_docs",
+                    arguments={"product_id": product_id, "question": last_msg.get("content", "")},
+                ),
+            ]
+            if asks_price:
+                calls.append(ToolCall(
+                    call_id="call_page_product_price",
+                    name="get_product_price",
+                    arguments={"product_id": product_id},
+                ))
+            return LLMResponse(
+                content=None,
+                tool_calls=calls,
                 model_used=f"mock-{model_tier}"
             )
         if order_context and any(word in user_text for word in (
@@ -300,22 +406,24 @@ class MockLLMClient:
                 name="find_product",
                 arguments={"name_text": product_name},
             )]
-            asks_price = any(word in user_text for word in ("price", "cost", "discount", "stock", "available"))
-            asks_specs = any(word in user_text for word in (
-                "battery", "feature", "spec", "warranty", "pair", "connect", "water", "display", "sensor"
-            ))
+            asks_specs = asks_product_info
             if asks_price:
                 calls.append(ToolCall(
                     call_id="call_product_price_01",
                     name="get_product_price",
                     arguments={"product_id": product_id},
                 ))
-            if asks_specs or not asks_price or "p1041" in user_text.lower():
+            if asks_specs:
                 calls.append(ToolCall(
-                    call_id="call_product_docs_01",
-                    name="search_product_docs",
-                    arguments={"product_id": product_id, "question": user_text},
+                    call_id="call_product_details_01",
+                    name="get_product_details",
+                    arguments={"product_id": product_id},
                 ))
+            calls.append(ToolCall(
+                call_id="call_product_docs_01",
+                name="search_product_docs",
+                arguments={"product_id": product_id, "question": user_text},
+            ))
             return LLMResponse(content=None, tool_calls=calls, model_used=f"mock-{model_tier}")
 
         # Store policy and delivery questions use policy retrieval.
@@ -425,13 +533,6 @@ class MockLLMClient:
                 model_used=self.default_model
             )
 
-        # Check for Product Specs & Pricing
-        if "1499" in combined and "42 hours" in combined:
-            return LLMResponse(
-                content="The Pulse Buds 141 features up to 42 hours of total playback time (6 hours per bud) and is currently available for ₹1,299 (discounted from ₹1,499).",
-                model_used=self.default_model
-            )
-
         # Build concise replies from structured catalog and order results.
         product_match = next((
             candidate
@@ -444,6 +545,24 @@ class MockLLMClient:
         details_result = next((r for r in tool_results if isinstance(r.get("specs"), dict)), None)
         if not product_name and details_result:
             product_name = details_result.get("name")
+
+        last_user_text = next((
+            str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "user"
+        ), "")
+        asks_for_price = any(
+            cue in last_user_text.lower()
+            for cue in ("price", "cost", "how much", "discount", "stock", "available")
+        )
+        if details_result and details_result.get("found") and product_name and not asks_for_price:
+            focused_answer = _focused_product_spec_answer(
+                str(product_name), details_result.get("specs", {}), last_user_text
+            )
+            if focused_answer:
+                return LLMResponse(content=focused_answer, model_used=self.default_model)
+            if re.search(r"\b(?:tell\s+me\s+about|about\s+this\s+product|describe|overview|key\s+details)\b", last_user_text, re.I):
+                overview = _product_overview_answer(str(product_name), details_result.get("specs", {}))
+                if overview:
+                    return LLMResponse(content=overview, model_used=self.default_model)
 
         answer_parts = []
         if price_result and price_result.get("found"):
@@ -465,12 +584,12 @@ class MockLLMClient:
             if isinstance(specs, dict):
                 answer_parts.extend(
                     f"{key.replace('_', ' ').title()}: {value}"
-                    for key, value in list(specs.items())[:5]
+                    for key, value in list(specs.items())[:8]
                 )
 
         chunks = next((r.get("chunks") for r in tool_results if isinstance(r.get("chunks"), list)), None)
         if chunks:
-            answer_parts.append(str(chunks[0]))
+            answer_parts.extend(str(chunk)[:1200] for chunk in chunks[:2] if str(chunk).strip())
         policy_result = next((r for r in tool_results if isinstance(r.get("clauses"), list)), None)
         if policy_result is not None:
             clauses = policy_result["clauses"]

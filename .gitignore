@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 env/
 venv/
+node_modules/
 *.log
 SkillOpt/
 .DS_Store
@@ -19,6 +20,19 @@ test_concurrency_*.db
 master-dashboard/screenshot_*.png
 scratch/
 whatsapp-openwa/novaretail-support.data.json
+
+# Generated test and tooling artifacts
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage*
+coverage/
+htmlcov/
+test-results/
+playwright-report/
 
 # Local checkout of the upstream OpenWA gateway (managed in its own Git repository)
 /openwa-gateway/

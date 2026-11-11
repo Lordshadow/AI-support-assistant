@@ -91,7 +91,8 @@ export const RefundsPage: React.FC<{ showToast?: (type: any, msg: string) => voi
       const amount = Number(data.amount_inr);
       const amountText = Number.isFinite(amount) ? ` Store refund #${data.store_refund_id} for ₹${amount.toLocaleString('en-IN')} was processed.` : '';
       const modeText = data.test_mode && data.money_moved === false ? ' Test mode confirmed; no money moved.' : '';
-      setActionSuccessMsg(`Refund #${variables.refundId} was synchronized.${amountText}${modeText}`);
+      const decisionText = variables.decision === 'approved' ? 'approved' : 'rejected';
+      setActionSuccessMsg(`Refund #${variables.refundId} was ${decisionText} and synchronized.${amountText}${modeText}`);
       setStaffNote('');
       setConfirmAction(null);
       queryClient.invalidateQueries({ queryKey: ['refunds'] });

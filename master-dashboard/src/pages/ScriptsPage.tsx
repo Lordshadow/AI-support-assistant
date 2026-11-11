@@ -167,8 +167,8 @@ export const ScriptsPage: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Widget embed generator state
-  const [widgetTenant, setWidgetTenant] = useState('demo-shop');
-  const [widgetTheme, setWidgetTheme] = useState('teal');
+  const [widgetTenant, setWidgetTenant] = useState('tenant_novaretail');
+  const [widgetApiBase, setWidgetApiBase] = useState(() => window.location.origin);
   const [widgetCopied, setWidgetCopied] = useState(false);
 
   const categories = [
@@ -198,11 +198,17 @@ export const ScriptsPage: React.FC = () => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const normalizedWidgetApiBase = widgetApiBase.trim().replace(/\/+$/, '');
+  const escapeHtmlAttribute = (value: string) => value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
   const widgetSnippet = `<script
-  src="http://localhost:8000/widget/bundle.js"
-  data-tenant="${widgetTenant}"
-  data-theme="${widgetTheme}"
-  async>
+  src="${escapeHtmlAttribute(normalizedWidgetApiBase)}/widget/v1/widget.js"
+  data-tenant="${escapeHtmlAttribute(widgetTenant.trim())}"
+  data-api-base="${escapeHtmlAttribute(normalizedWidgetApiBase)}"
+  defer>
 </script>`;
 
   const handleCopyWidget = () => {
@@ -484,17 +490,18 @@ export const ScriptsPage: React.FC = () => {
             </div>
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-[#3FD2C0] mb-1.5">
-                Widget Visual Theme
+                Assistant API Base URL
               </label>
-              <select
-                value={widgetTheme}
-                onChange={(e) => setWidgetTheme(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-[rgba(6,47,46,0.7)] border border-[rgba(63,210,192,0.25)] text-[#EAF6F4] text-xs outline-none focus:border-[#3FD2C0]"
-              >
-                <option value="teal">Teal Glassmorphic (Default)</option>
-                <option value="emerald">Emerald Retail</option>
-                <option value="dark">Stealth Dark</option>
-              </select>
+              <input
+                type="url"
+                value={widgetApiBase}
+                onChange={(e) => setWidgetApiBase(e.target.value)}
+                placeholder="https://support-api.example.com"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[rgba(6,47,46,0.7)] border border-[rgba(63,210,192,0.25)] text-[#EAF6F4] font-mono text-xs outline-none focus:border-[#3FD2C0]"
+              />
+              <p className="mt-1.5 text-[11px] text-[#84ABA6]">
+                For a live store, use the public HTTPS URL of your assistant API and allow the storefront domain in WIDGET_ALLOWED_ORIGINS.
+              </p>
             </div>
           </div>
 

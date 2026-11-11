@@ -19,6 +19,7 @@ from services.mcp_servers import (
     MCPHandoffServer, MCPToolDispatcher
 )
 from services.worker import WorkerOrchestrator, MockLLMClient, GroqLLMClient
+from services.worker.llm_client import LLMResponse, ToolCall
 from services.worker.orchestrator import _repair_missing_catalog_claim
 from services.worker.escalation_guard import escalation_guard
 from services.worker.spend_manager import spend_manager
@@ -120,6 +121,52 @@ class TestWorkerOrchestrator(unittest.TestCase):
         ))
         self.assertIn("get_product_details", resp.tools_called)
         self.assertIn("42 hours", resp.reply)
+
+    def test_focused_product_follow_up_stays_concise_with_verbose_model(self):
+        class VerboseModel:
+            calls = 0
+
+            async def chat(self, messages, tools=None, model_tier="small"):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content=None,
+                        tool_calls=[ToolCall(
+                            call_id="get-details",
+                            name="get_product_details",
+                            arguments={"product_id": "4728"},
+                        )],
+                        model_used="test-model",
+                    )
+                return LLMResponse(
+                    content="Full product notes: Processor AMD Ryzen 5 7535HS, 6 cores. Other specs and FAQs follow.",
+                    model_used="test-model",
+                )
+
+        async def product_details(_name, _arguments, _ctx):
+            return {
+                "found": True,
+                "product_id": "4728",
+                "name": "Acer Nitro V 15",
+                "specs": {"Processor": "AMD Ryzen 5 7535HS, 6 cores, 3.3GHz base"},
+            }
+
+        self.orchestrator.llm = VerboseModel()
+        context = SessionContext(
+            tenant_id="demo",
+            conv_id="concise-product-follow-up",
+            level=AuthLevel.ANONYMOUS,
+            page_context=PageContext(
+                url="https://shop.example/product/4728",
+                page_type="product_details",
+                product_id="4728",
+            ),
+        )
+        with patch.object(self.dispatcher, "execute_tool", new=AsyncMock(side_effect=product_details)):
+            response = run_sync(self.orchestrator.process_turn("How many cores does it have?", context))
+
+        self.assertEqual(response.reply, "The **Acer Nitro V 15** has **6 cores**, using the **AMD Ryzen 5 7535HS** processor.")
+        self.assertNotIn("Full product notes", response.reply)
 
     def test_catalog_details_repair_model_false_missing_claim(self):
         reply = "I couldn't locate specific camera-feature details in the product data."
