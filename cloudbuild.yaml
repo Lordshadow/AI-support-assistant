@@ -1,16 +1,28 @@
 
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
+  # Build FastAPI backend
+  - name: gcr.io/cloud-builders/docker
     args:
-      - 'build'
-      - '-f'
-      - 'support-assistant/Dockerfile'
-      - '-t'
-      - 'asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/ai-support-assistant:latest'
-      - 'support-assistant'
+      - build
+      - -t
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/assistant-api:latest
+      - -f
+      - support-assistant/Dockerfile
+      - support-assistant
+
+  # Build React dashboard
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/master-dashboard:latest
+      - -f
+      - master-dashboard/Dockerfile
+      - master-dashboard
 
 images:
-  - 'asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/ai-support-assistant:latest'
+  - asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/assistant-api:latest
+  - asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/master-dashboard:latest
 
 options:
   logging: CLOUD_LOGGING_ONLY
