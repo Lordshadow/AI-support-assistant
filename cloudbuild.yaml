@@ -6,11 +6,11 @@ steps:
       - '-f'
       - 'support-assistant/Dockerfile'
       - '-t'
-      - 'asia-south1-docker.pkg.dev/ai-support-514405/cloud-run-source-deploy/lordshadow-ai-support-assistant/ai-support-assistant:latest'
+      - 'asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/ai-support-assistant:latest'
       - 'support-assistant'
 
 images:
-  - 'asia-south1-docker.pkg.dev/ai-support-514405/cloud-run-source-deploy/lordshadow-ai-support-assistant/ai-support-assistant:latest'
+  - 'asia-south1-docker.pkg.dev/$PROJECT_ID/ai-support-images/ai-support-assistant:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
