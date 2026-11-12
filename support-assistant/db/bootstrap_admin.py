@@ -28,7 +28,9 @@ async def bootstrap_admin() -> None:
         raise ValueError("Admin email, full name, and tenant ID must not be blank.")
 
     now = datetime.now(timezone.utc)
-    async with get_async_session() as session:
+    # RLS on staff_tenant_memberships requires the target tenant context even
+    # for the initial membership row. Set it for this transaction before writes.
+    async with get_async_session(tenant_id=tenant_id) as session:
         existing = (
             await session.execute(select(StaffUser).where(StaffUser.email == email))
         ).scalars().first()
