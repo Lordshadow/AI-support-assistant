@@ -38,7 +38,7 @@ export const Navbar: React.FC = () => {
     ...(isAdmin ? [{ to: '/admin', label: 'Staff Admin' }] : []),
   ];
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-colors whitespace-nowrap cursor-pointer ${isActive ? 'bg-[#3FD2C0] text-[#062F2E] font-bold' : 'text-[#B6D5D1] hover:text-[#EAF6F4] hover:bg-[rgba(255,255,255,0.06)]'}`;
+    `shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide transition-colors whitespace-nowrap cursor-pointer ${isActive ? 'bg-[#3FD2C0] text-[#062F2E] font-bold' : 'text-[#B6D5D1] hover:text-[#EAF6F4] hover:bg-[rgba(255,255,255,0.06)]'}`;
 
   return (
     <>
@@ -46,13 +46,15 @@ export const Navbar: React.FC = () => {
         {/* Left: Floating Top Nav Pill Container */}
         <nav
           aria-label="Main Navigation"
-          className="glass-chrome flex items-center gap-1 sm:gap-2 px-3 py-1.5 rounded-full shadow-[0_8px_32px_rgba(4,30,29,0.4)] border border-[rgba(63,210,192,0.22)] overflow-x-auto max-w-full"
+          className="glass-chrome flex w-full min-w-0 flex-wrap items-center gap-1 sm:w-auto sm:flex-1 sm:gap-2 px-3 py-1.5 rounded-3xl sm:rounded-full shadow-[0_8px_32px_rgba(4,30,29,0.4)] border border-[rgba(63,210,192,0.22)]"
         >
           {/* Brand Logo Pill Chip */}
-          <div
+          <button
+            type="button"
             onClick={() => navigate('/')}
-            className="flex items-center gap-2 pl-2 pr-3 py-1 cursor-pointer select-none group"
+            className="flex shrink-0 items-center gap-2 pl-2 pr-3 py-1 cursor-pointer select-none group"
             title="NovaRetail Support Desk"
+            aria-label="Go to overview"
           >
             <div className="w-7 h-7 rounded-full bg-[#3FD2C0] flex items-center justify-center font-black text-xs text-[#062F2E] shadow-[0_0_12px_rgba(63,210,192,0.5)]">
               NR
@@ -60,7 +62,7 @@ export const Navbar: React.FC = () => {
             <span className="hidden md:inline font-bold text-xs tracking-wider uppercase text-[#EAF6F4] group-hover:text-[#3FD2C0] transition-colors">
               NovaRetail
             </span>
-          </div>
+          </button>
 
           <div className="h-4 w-px bg-[rgba(63,210,192,0.25)] mx-1" aria-hidden="true" />
 
@@ -95,7 +97,7 @@ export const Navbar: React.FC = () => {
         </nav>
 
         {/* Right Section: User Profile Chip */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex shrink-0 items-center gap-2.5">
           {/* User Profile Pill Chip */}
           <div className="glass-chrome flex items-center gap-2.5 pl-1.5 pr-2 py-1.5 rounded-full border border-[rgba(63,210,192,0.22)] shadow-[0_8px_24px_rgba(4,30,29,0.3)]">
             <div className="w-7 h-7 rounded-full bg-[rgba(15,92,88,0.9)] border border-[#3FD2C0] flex items-center justify-center text-xs font-bold text-[#3FD2C0]">
