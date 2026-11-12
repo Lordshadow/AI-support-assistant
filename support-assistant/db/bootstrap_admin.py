@@ -62,6 +62,9 @@ async def bootstrap_admin() -> None:
                 created_at=now,
             )
         )
+        # The ORM models intentionally avoid cross-tenant relationships; flush
+        # the parent explicitly before inserting the FK-dependent membership.
+        await session.flush()
         session.add(
             StaffTenantMembership(
                 id=f"mem_{staff_id}_{tenant_id}",
