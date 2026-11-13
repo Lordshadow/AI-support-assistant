@@ -316,10 +316,26 @@ class KnowledgeManifestEngine:
             "created_by": staff_id,
         }
 
+        # Insert the parent before association rows. There are no ORM relationships
+        # on KnowledgeVersionChunk, so relying on unit-of-work table ordering can
+        # send the FK child first on PostgreSQL.
+        version = KnowledgeVersion(
+            version_id=version_id,
+            tenant_id=tenant_id,
+            type="policy",
+            status="draft",
+            manifest=manifest,
+            created_by=staff_id,
+        )
+        session.add(version)
+        await session.flush()
+
         # Insert / merge chunks
+        chunk_ids: list[str] = []
         for clause in clauses:
             chunk_text = f"Policy Clause {clause.get('clause_id')}: {clause.get('title', '')}\n{clause.get('text', '')}"
             cid = generate_chunk_id(tenant_id, "policy", None, chunk_text)
+            chunk_ids.append(cid)
 
             existing_chunk = await session.get(KnowledgeChunk, cid)
             if not existing_chunk:
@@ -336,19 +352,11 @@ class KnowledgeManifestEngine:
                 )
                 session.add(chunk)
 
-            # Link version to chunk
-            ver_chunk = KnowledgeVersionChunk(version_id=version_id, chunk_id=cid)
-            session.add(ver_chunk)
+        # Ensure every chunk parent exists before inserting version-link rows.
+        await session.flush()
 
-        version = KnowledgeVersion(
-            version_id=version_id,
-            tenant_id=tenant_id,
-            type="policy",
-            status="draft",
-            manifest=manifest,
-            created_by=staff_id,
-        )
-        session.add(version)
+        for cid in chunk_ids:
+            session.add(KnowledgeVersionChunk(version_id=version_id, chunk_id=cid))
         await session.flush()
         return version
 

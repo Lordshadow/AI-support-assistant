@@ -4987,3 +4987,53 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**  
 - Apply migration 007 and deploy the assistant/dashboard revisions, then verify refund attempts fail closed before policy promotion and follow confirmed policy values after promotion.
+
+## [Task-120] - Add demo refund policy Markdown
+**Timestamp:** 2026-11-13 14:05 +05:30  
+**Status:** COMPLETED  
+**Objective & Rationale ("Why"):**  
+- Provide a clearly marked sample refund policy document for testing policy ingestion and assistant responses.
+
+**Architectural Boundaries & Modularity:**  
+- Add demo-only policy terms; do not present them as the user's actual business policy.
+- Keep automatic refund processing disabled in the demo policy parameters.
+
+**Files Touched:**  
+- `support-assistant/data/demo_refund_policy.md` (Created - fictional demo policy with explicit, non-live terms and zero auto-refund threshold).
+- `logs.md` (Appended this task record).
+
+**Verification & Quality Assurance:**  
+- Manually checked that the sample values align with the refund configuration fields: 30-day window, listed exclusions, ₹0 auto-refund limit.
+- No application code or production policy settings were changed.
+
+**Git Commit:**  
+- Not committed.
+
+**Next Planned Task:**  
+- Upload this Markdown file in the dashboard's policy page, confirm the listed values, and promote the policy version for demo use.
+
+## [Task-121] - Fix policy draft version-link ordering
+**Timestamp:** 2026-11-13 14:16:41 +05:30  
+**Status:** COMPLETED  
+**Objective & Rationale ("Why"):**  
+- Fix the policy-draft 500 reported in Cloud Run. PostgreSQL rejects knowledge-version chunk links when the parent version has not been inserted yet.
+
+**Architectural Boundaries & Modularity:**  
+- Persist the draft version before creating version-to-chunk links, then ensure any new chunk exists before linking it.
+- Keep tenant scoping and the single transaction unchanged.
+
+**Files Touched:**  
+- `support-assistant/ingestion/manifest_engine.py` (Modified - Flushes the knowledge version and chunks before adding association rows).
+- `support-assistant/tests/test_policy_draft_flush_order.py` (Created - Regression check validates foreign-key parent ordering).
+- `logs.md` (Appended this task record).
+
+**Verification & Quality Assurance:**  
+- `python -m unittest -v tests.test_policy_draft_flush_order` — 1 test passed.
+- `python -m py_compile ingestion/manifest_engine.py tests/test_policy_draft_flush_order.py` — passed.
+- `git diff --check` on the changed files — passed.
+
+**Git Commit:**  
+- To be committed and pushed to `origin/master` as the Cloud Run draft fix.
+
+**Next Planned Task:**  
+- Rebuild and deploy the assistant API image, then retry the demo policy draft in the Cloud Console dashboard.
