@@ -47,6 +47,12 @@ class GroqWhisperAdapter:
         transcript = await self._client.audio.transcriptions.create(
             file=file_tuple,
             model=self.model,
+            prompt=(
+                "Transcribe the audio verbatim in the language and script spoken; do not translate or paraphrase. "
+                "For Tamil-English code-switching (Tanglish), preserve Tamil words as spoken in Latin script "
+                "when the speaker uses Latin transliteration, and keep English words in English. "
+                "Preserve names, product names, order IDs, and numbers exactly."
+            ),
             response_format="text"
         )
         return str(transcript).strip()

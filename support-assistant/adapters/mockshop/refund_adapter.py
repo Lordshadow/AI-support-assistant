@@ -16,6 +16,9 @@ from core.policy_engine import (
 from adapters.mockshop.order_adapter import MockOrderAdapter
 
 
+MOCKSHOP_RETURN_WINDOW_DAYS = 30
+
+
 class MockRefundAdapter:
     """In-memory concrete implementation of RefundPort."""
 
@@ -36,7 +39,15 @@ class MockRefundAdapter:
         if not order:
             return False, f"Order '{order_id}' was not found for this account.", 0
 
-        return check_refund_eligibility(order, item_id=item_id, current_time=self._order_adapter.now)
+        # The mock shop represents an explicitly configured demo policy. Production
+        # repositories must load confirmed tenant values and fail closed if absent.
+        return check_refund_eligibility(
+            order,
+            item_id=item_id,
+            current_time=self._order_adapter.now,
+            return_window_days=MOCKSHOP_RETURN_WINDOW_DAYS,
+            excluded_categories=["digital", "gift cards"],
+        )
 
     async def request_refund(
         self,

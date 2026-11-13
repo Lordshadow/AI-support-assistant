@@ -36,9 +36,9 @@ export const KnowledgePage: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [parsedClauses, setParsedClauses] = useState<any[] | null>(null);
-  const [returnDays, setReturnDays] = useState(30);
-  const [excludedCats, setExcludedCats] = useState('digital, gift cards, perishables');
-  const [autoLimit, setAutoLimit] = useState(2000);
+  const [returnDays, setReturnDays] = useState('');
+  const [excludedCats, setExcludedCats] = useState('');
+  const [autoLimit, setAutoLimit] = useState('');
 
   // Sync Knowledge job polling state
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -243,14 +243,24 @@ export const KnowledgePage: React.FC = () => {
   // Create policy draft
   const handleCreateDraft = async () => {
     if (!parsedClauses || parsedClauses.length === 0) return;
+    const returnDaysValue = Number(returnDays);
+    const autoLimitValue = Number(autoLimit);
+    if (!returnDays.trim() || !Number.isInteger(returnDaysValue) || returnDaysValue < 1 || returnDaysValue > 365) {
+      setToastMsg({ type: 'error', text: 'Enter the return window from your actual policy (1–365 days).' });
+      return;
+    }
+    if (!autoLimit.trim() || !Number.isInteger(autoLimitValue) || autoLimitValue < 0 || autoLimitValue > 50000) {
+      setToastMsg({ type: 'error', text: 'Enter the auto-refund limit configured for your store (₹0–₹50,000).' });
+      return;
+    }
     try {
       await api.post('/api/admin/v1/knowledge/policy/draft', {
         filename: file?.name || 'policy.md',
         clauses: parsedClauses,
         confirmed_policy: {
-          return_window_days: Number(returnDays),
+          return_window_days: returnDaysValue,
           excluded_categories: excludedCats.split(',').map((s) => s.trim()),
-          auto_refund_limit_inr: Number(autoLimit),
+          auto_refund_limit_inr: autoLimitValue,
         },
       });
       setToastMsg({ type: 'success', text: 'Draft policy version successfully created.' });
@@ -633,8 +643,11 @@ export const KnowledgePage: React.FC = () => {
                 </label>
                 <input
                   type="number"
+                  required
+                  min={1}
+                  max={365}
                   value={returnDays}
-                  onChange={(e) => setReturnDays(Number(e.target.value))}
+                  onChange={(e) => setReturnDays(e.target.value)}
                   className="w-full px-4 py-2 rounded-xl bg-[rgba(11,74,71,0.5)] border border-[rgba(63,210,192,0.25)] text-sm text-[#EAF6F4]"
                 />
               </div>
@@ -645,10 +658,14 @@ export const KnowledgePage: React.FC = () => {
                 </label>
                 <input
                   type="text"
+                  aria-describedby="excluded-categories-help"
                   value={excludedCats}
                   onChange={(e) => setExcludedCats(e.target.value)}
                   className="w-full px-4 py-2 rounded-xl bg-[rgba(11,74,71,0.5)] border border-[rgba(63,210,192,0.25)] text-sm text-[#EAF6F4]"
                 />
+                <p id="excluded-categories-help" className="mt-1 text-[11px] text-[#B6D5D1]">
+                  Enter exclusions from your policy. Leave blank only if your policy has none.
+                </p>
               </div>
 
               <div>
@@ -657,8 +674,11 @@ export const KnowledgePage: React.FC = () => {
                 </label>
                 <input
                   type="number"
+                  required
+                  min={0}
+                  max={50000}
                   value={autoLimit}
-                  onChange={(e) => setAutoLimit(Number(e.target.value))}
+                  onChange={(e) => setAutoLimit(e.target.value)}
                   className="w-full px-4 py-2 rounded-xl bg-[rgba(11,74,71,0.5)] border border-[rgba(63,210,192,0.25)] text-sm text-[#EAF6F4]"
                 />
               </div>

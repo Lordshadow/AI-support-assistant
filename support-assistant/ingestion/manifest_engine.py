@@ -293,9 +293,13 @@ class KnowledgeManifestEngine:
         """
         Creates a new draft policy version with confirmed parameters and content-addressed chunks.
         """
-        return_window = int(confirmed_values.get("return_window_days", 30))
-        excluded_cats = list(confirmed_values.get("excluded_categories", ["digital", "gift cards", "perishables"]))
-        auto_limit = int(confirmed_values.get("auto_refund_limit_inr", 2000))
+        required_policy_values = ("return_window_days", "excluded_categories", "auto_refund_limit_inr")
+        missing_values = [key for key in required_policy_values if key not in confirmed_values]
+        if missing_values:
+            raise ValueError(f"Policy values require explicit confirmation: {', '.join(missing_values)}")
+        return_window = int(confirmed_values["return_window_days"])
+        excluded_cats = list(confirmed_values["excluded_categories"])
+        auto_limit = int(confirmed_values["auto_refund_limit_inr"])
 
         version_id = f"ver_pol_{uuid.uuid4().hex[:12]}"
 
@@ -788,14 +792,17 @@ class KnowledgeManifestEngine:
 
         if vtype == "policy":
             confirmed = manifest.get("confirmed_policy", {})
-            return_window = confirmed.get("return_window_days", 30)
-            excluded_cats = [c.lower() for c in confirmed.get("excluded_categories", [])]
-            auto_limit = confirmed.get("auto_refund_limit_inr", 2000)
+            return_window = confirmed.get("return_window_days")
+            configured_exclusions = confirmed.get("excluded_categories")
+            excluded_cats = [c.lower() for c in configured_exclusions] if configured_exclusions is not None else []
+            auto_limit = confirmed.get("auto_refund_limit_inr")
 
             # --- Deterministic Scenarios (100% required) ---
             # 1. Non-refundable item test
             total_det += 1
-            has_digital_excluded = any("digital" in c or "gift" in c for c in excluded_cats)
+            has_digital_excluded = configured_exclusions is not None and any(
+                "digital" in c or "gift" in c for c in excluded_cats
+            )
             scenario_results.append({
                 "name": "deterministic_excluded_categories_guard",
                 "category": "deterministic",
@@ -807,7 +814,7 @@ class KnowledgeManifestEngine:
 
             # 2. Return window bound test
             total_det += 1
-            valid_window = (7 <= return_window <= 90)
+            valid_window = isinstance(return_window, int) and 7 <= return_window <= 90
             scenario_results.append({
                 "name": "deterministic_return_window_bounds",
                 "category": "deterministic",
@@ -819,7 +826,7 @@ class KnowledgeManifestEngine:
 
             # 3. Auto-refund ceiling limit test
             total_det += 1
-            valid_limit = (500 <= auto_limit <= 10000)
+            valid_limit = isinstance(auto_limit, int) and 500 <= auto_limit <= 10000
             scenario_results.append({
                 "name": "deterministic_auto_refund_ceiling",
                 "category": "deterministic",
@@ -1051,8 +1058,9 @@ class KnowledgeManifestEngine:
                 max_ver = (await session.execute(stmt_ver)).scalar_one()
                 cfg = TenantPolicyConfig(
                     tenant_id=tenant_id,
-                    auto_refund_limit_inr=confirmed.get("auto_refund_limit_inr", 2000),
-                    return_window_days=confirmed.get("return_window_days", 30),
+                    auto_refund_limit_inr=confirmed["auto_refund_limit_inr"],
+                    return_window_days=confirmed["return_window_days"],
+                    excluded_categories=confirmed["excluded_categories"],
                     version=max_ver + 1,
                     updated_by=staff_id
                 )

@@ -108,9 +108,9 @@ async def _run_catalog_ingestion(tenant_id: str, staff_id: str, job_id: str, sta
 
 
 class ConfirmedPolicyForm(BaseModel):
-    return_window_days: int = Field(default=30, ge=1, le=365)
-    excluded_categories: List[str] = Field(default_factory=lambda: ["digital", "gift cards", "perishables"])
-    auto_refund_limit_inr: int = Field(default=2000, ge=0, le=50000)
+    return_window_days: int = Field(ge=1, le=365)
+    excluded_categories: List[str]
+    auto_refund_limit_inr: int = Field(ge=0, le=50000)
 
 
 class CreatePolicyDraftRequest(BaseModel):

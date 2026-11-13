@@ -250,7 +250,7 @@ class TestDeterministicPolicyBoundaries(unittest.TestCase):
             items=[OrderItem(item_id="i1", product_id="p1", product_name="Item", category="electronics", price=1000, quantity=1, is_digital=False, is_refunded=False)],
             total_amount_inr=1000
         )
-        is_elig_30, reason_30, _ = check_refund_eligibility(order_day_30, current_time=self.now)
+        is_elig_30, reason_30, _ = check_refund_eligibility(order_day_30, current_time=self.now, return_window_days=30, excluded_categories=[])
         self.assertTrue(is_elig_30)
 
         order_day_31 = Order(
@@ -262,7 +262,7 @@ class TestDeterministicPolicyBoundaries(unittest.TestCase):
             items=[OrderItem(item_id="i2", product_id="p2", product_name="Item", category="electronics", price=1000, quantity=1, is_digital=False, is_refunded=False)],
             total_amount_inr=1000
         )
-        is_elig_31, reason_31, _ = check_refund_eligibility(order_day_31, current_time=self.now)
+        is_elig_31, reason_31, _ = check_refund_eligibility(order_day_31, current_time=self.now, return_window_days=30, excluded_categories=[])
         self.assertFalse(is_elig_31)
         self.assertIn("Return window expired", reason_31)
 
@@ -277,7 +277,7 @@ class TestDeterministicPolicyBoundaries(unittest.TestCase):
             items=[OrderItem(item_id="i1", product_id="p1", product_name="Item", category="electronics", price=1000, quantity=1, is_digital=False, is_refunded=False)],
             total_amount_inr=1000
         )
-        is_elig, reason, _ = check_refund_eligibility(order_shipping, current_time=self.now)
+        is_elig, reason, _ = check_refund_eligibility(order_shipping, current_time=self.now, return_window_days=30, excluded_categories=[])
         self.assertFalse(is_elig)
         self.assertIn("Refunds can only be requested for delivered orders", reason)
 

@@ -47,7 +47,7 @@ class TestAlembicAndRLS(unittest.TestCase):
         """Verify Alembic script directory recognizes the current migration head."""
         script = ScriptDirectory.from_config(self.cfg)
         heads = script.get_heads()
-        self.assertEqual(heads, ["006_exact_order_refund_amounts"])
+        self.assertEqual(heads, ["007_confirmed_policy_exclusions"])
         rev = script.get_revision("001_core_and_rls")
         self.assertIsNotNone(rev)
         self.assertIsNone(rev.down_revision)
@@ -101,6 +101,7 @@ class TestAlembicAndRLS(unittest.TestCase):
         self.assertIn("REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM novaretail_app;", sql)
         self.assertIn("ALTER TABLE orders ALTER COLUMN total_amount_inr TYPE NUMERIC(12, 2)", sql)
         self.assertIn("refund_eligibility_verified BOOLEAN DEFAULT true NOT NULL", sql)
+        self.assertIn("ADD COLUMN excluded_categories JSONB", sql)
 
     def test_offline_downgrade_sql_generation(self):
         """Verify downgrade static SQL cleans up all RLS policies and drops tables safely."""
@@ -219,6 +220,13 @@ class TestPostgresRepositories(unittest.TestCase):
                 async with session.begin():
                     tenant = Tenant(tenant_id="tenant_novaretail", name="NovaRetail")
                     session.add(tenant)
+                    session.add(TenantPolicyConfig(
+                        tenant_id="tenant_novaretail",
+                        auto_refund_limit_inr=2000,
+                        return_window_days=30,
+                        excluded_categories=[],
+                        version=1,
+                    ))
                     # Small order (under limit)
                     o1 = OrderModel(
                         order_id="ORD-SMALL",
@@ -268,7 +276,7 @@ class TestPostgresRepositories(unittest.TestCase):
                         yield sess
 
             order_repo = PostgresOrderRepository(tenant_id="tenant_novaretail")
-            refund_repo = PostgresRefundRepository(order_port=order_repo, tenant_id="tenant_novaretail", auto_limit_inr=2000)
+            refund_repo = PostgresRefundRepository(order_port=order_repo, tenant_id="tenant_novaretail")
 
             with patch("adapters.postgres.order_repository.get_async_session", side_effect=mock_get_session), \
                  patch("adapters.postgres.refund_repository.get_async_session", side_effect=mock_get_session):

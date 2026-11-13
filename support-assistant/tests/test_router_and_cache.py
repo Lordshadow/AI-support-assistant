@@ -52,6 +52,10 @@ class TestRouterAndCache(unittest.TestCase):
         self.assertEqual(LanguageNormalizer.detect_language("Where is my order?"), "en")
         self.assertEqual(LanguageNormalizer.detect_language("என் ஆர்டர் எப்போது வரும்?"), "ta")
         self.assertEqual(LanguageNormalizer.detect_language("En order eppo deliver aagum? sollunga."), "tanglish")
+        self.assertEqual(LanguageNormalizer.detect_language("Return panna enna policy irukku?"), "tanglish")
+        self.assertEqual(LanguageNormalizer.detect_language("Refund eppo credit aagum?"), "tanglish")
+        self.assertEqual(LanguageNormalizer.detect_language("Return panna mudiyuma?"), "tanglish")
+        self.assertEqual(LanguageNormalizer.detect_language("What is the return policy?"), "en")
 
     def test_entity_extraction(self):
         norm = LanguageNormalizer.normalize("Refund ORD-5501 for ₹1,499 please")
@@ -112,6 +116,14 @@ class TestRouterAndCache(unittest.TestCase):
         ))
         self.assertEqual(decision.route_type, "small_model")
         self.assertEqual(decision.intent, "refund_request")
+
+    def test_tanglish_policy_question_uses_model_path_not_policy_template(self):
+        decision = run_sync(self.router.route_message(
+            "Return panna enna policy irukku?", self.anon_ctx
+        ))
+        self.assertEqual(decision.route_type, "small_model")
+        self.assertEqual(decision.normalized.language, "tanglish")
+        self.assertIsNone(decision.template_response)
 
     def test_refund_action_does_not_use_policy_template(self):
         decision = run_sync(self.router.route_message("refund", self.ident_ctx))

@@ -129,7 +129,7 @@ class TestMockShopAdapters(unittest.TestCase):
             idempotency_key="idem_digi_001"
         ))
         self.assertEqual(result.state, RefundState.REJECTED)
-        self.assertIn("digital product / gift card and is non-refundable", result.message)
+        self.assertIn("category excluded by the configured store", result.message)
 
     def test_staff_decision_recording(self):
         # 1. Submit > ₹2000 refund -> PENDING_APPROVAL

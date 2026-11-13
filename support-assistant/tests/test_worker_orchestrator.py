@@ -77,6 +77,24 @@ class TestWorkerOrchestrator(unittest.TestCase):
         self.assertEqual(resp.model_used, "template-engine")
         self.assertIn("NovaRetail Support", resp.reply)
 
+    def test_tanglish_language_instruction_reaches_model(self):
+        class CapturingModel:
+            messages = None
+
+            async def chat(self, messages, tools=None, model_tier="small"):
+                self.messages = messages
+                return LLMResponse(content="Seri, policy records-la check panren.", model_used="test-model")
+
+        model = CapturingModel()
+        self.orchestrator.llm = model
+        response = run_sync(self.orchestrator.process_turn(
+            "Return panna enna policy irukku?", self.anon_ctx
+        ))
+
+        self.assertEqual(response.language, "tanglish")
+        self.assertIn("natural, polite Tanglish", model.messages[0]["content"])
+        self.assertIn("Do not answer in English-only", model.messages[0]["content"])
+
     def test_verified_order_status_template_fast_path(self):
         resp = run_sync(self.orchestrator.process_turn(
             "Where is my order ORD-1029?", self.ident_ctx

@@ -1153,7 +1153,6 @@ def create_default_app() -> GatewayApp:
     refunds = PostgresRefundRepository(
         order_port=orders,
         tenant_id=tenant_id,
-        auto_limit_inr=2000,
     )
 
     async def persist_escalation(

@@ -278,6 +278,18 @@ class WorkerOrchestrator:
 
         # 6. Tool-Calling LLM Execution Loop
         system_content = self.system_prompt
+        language_instructions = {
+            "en": "Reply in English.",
+            "ta": "Reply in natural, polite Tamil using Tamil script. Keep names, IDs, and amounts exactly as provided.",
+            "tanglish": (
+                "Reply in natural, polite Tanglish: write Tamil words in Latin transliteration and mix in English terms "
+                "naturally. Do not answer in English-only or switch to Tamil script. Preserve names, IDs, and amounts exactly."
+            ),
+        }
+        system_content += (
+            f"\n\n[Response Language For This Turn: {lang}]\n"
+            f"{language_instructions.get(lang, language_instructions['en'])}"
+        )
         if ctx.customer_id and ctx.level.satisfies(AuthLevel.IDENTIFIED):
             session_snippet = (
                 f"\n\n[Active Session Identity]\n"

@@ -328,6 +328,18 @@ Items damaged during transit must be reported within 48 hours with photographic 
         self.assertEqual(draft["manifest"]["confirmed_policy"]["auto_refund_limit_inr"], 3000)
         self.assertEqual(draft["manifest"]["chunk_count"], 2)
 
+    def test_policy_draft_requires_explicit_confirmed_values(self):
+        response = self.client.post(
+            "/api/admin/v1/knowledge/policy/draft",
+            json={
+                "filename": "policy.md",
+                "clauses": [{"clause_id": "C1", "title": "Returns", "text": "Return terms."}],
+                "confirmed_policy": {},
+            },
+            headers={"Authorization": "Bearer sess_mgr", "X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(response.status_code, 422)
+
     def test_catalog_preview_returns_source_count_and_sample(self):
         from unittest.mock import AsyncMock, patch
 

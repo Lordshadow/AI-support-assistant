@@ -26,6 +26,7 @@ class TestCorePolicyEngine(unittest.TestCase):
         self.now = datetime(2026, 11, 2, 12, 0, 0, tzinfo=timezone.utc)
         self.valid_delivered_at = self.now - timedelta(days=10)
         self.expired_delivered_at = self.now - timedelta(days=35)
+        self.configured_policy = {"return_window_days": 30, "excluded_categories": ["digital", "gift cards"]}
 
         self.sample_order = Order(
             order_id="ORD-101",
@@ -78,7 +79,7 @@ class TestCorePolicyEngine(unittest.TestCase):
 
     def test_eligibility_within_30_days(self):
         eligible, reason, amount = check_refund_eligibility(
-            self.sample_order, current_time=self.now
+            self.sample_order, current_time=self.now, **self.configured_policy
         )
         self.assertTrue(eligible)
         self.assertEqual(amount, 1499)
@@ -95,7 +96,7 @@ class TestCorePolicyEngine(unittest.TestCase):
             delivered_at=self.expired_delivered_at
         )
         eligible, reason, amount = check_refund_eligibility(
-            expired_order, current_time=self.now
+            expired_order, current_time=self.now, **self.configured_policy
         )
         self.assertFalse(eligible)
         self.assertEqual(amount, 0)
@@ -121,11 +122,11 @@ class TestCorePolicyEngine(unittest.TestCase):
             delivered_at=self.valid_delivered_at
         )
         eligible, reason, amount = check_refund_eligibility(
-            digital_order, current_time=self.now
+            digital_order, current_time=self.now, **self.configured_policy
         )
         self.assertFalse(eligible)
         self.assertEqual(amount, 0)
-        self.assertIn("digital product / gift card and is non-refundable", reason)
+        self.assertIn("category excluded by the configured store", reason)
 
     def test_eligibility_already_refunded_rejected(self):
         already_refunded_order = Order(
@@ -147,7 +148,7 @@ class TestCorePolicyEngine(unittest.TestCase):
             delivered_at=self.valid_delivered_at
         )
         eligible, reason, amount = check_refund_eligibility(
-            already_refunded_order, current_time=self.now
+            already_refunded_order, current_time=self.now, **self.configured_policy
         )
         self.assertFalse(eligible)
         self.assertIn("already been refunded", reason)
@@ -162,7 +163,7 @@ class TestCorePolicyEngine(unittest.TestCase):
             created_at=self.now
         )
         eligible, reason, amount = check_refund_eligibility(
-            processing_order, current_time=self.now
+            processing_order, current_time=self.now, **self.configured_policy
         )
         self.assertFalse(eligible)
         self.assertIn("can only be requested for delivered orders", reason)
@@ -174,7 +175,7 @@ class TestCorePolicyEngine(unittest.TestCase):
         )
         order = Order("ORD-UNKNOWN", "CUST-42", [item], Decimal("1200.75"), OrderStatus.DELIVERED,
                       self.valid_delivered_at, self.valid_delivered_at)
-        eligible, reason, amount = check_refund_eligibility(order, current_time=self.now)
+        eligible, reason, amount = check_refund_eligibility(order, current_time=self.now, **self.configured_policy)
         self.assertFalse(eligible)
         self.assertEqual(amount, 0)
         self.assertIn("could not be verified", reason)
@@ -182,7 +183,7 @@ class TestCorePolicyEngine(unittest.TestCase):
     def test_future_delivery_date_fails_closed(self):
         order = Order("ORD-FUTURE", "CUST-42", self.sample_order.items, 1499, OrderStatus.DELIVERED,
                       self.now, self.now + timedelta(days=1))
-        eligible, reason, amount = check_refund_eligibility(order, current_time=self.now)
+        eligible, reason, amount = check_refund_eligibility(order, current_time=self.now, **self.configured_policy)
         self.assertFalse(eligible)
         self.assertEqual(amount, 0)
         self.assertIn("in the future", reason)
@@ -191,13 +192,31 @@ class TestCorePolicyEngine(unittest.TestCase):
         item = OrderItem("ITM-PAISE", "X", "Camera", "electronics", Decimal("11188.82"))
         order = Order("ORD-PAISE", "CUST-42", [item], Decimal("11188.82"), OrderStatus.DELIVERED,
                       self.valid_delivered_at, self.valid_delivered_at)
-        eligible, _, amount = check_refund_eligibility(order, current_time=self.now)
+        eligible, _, amount = check_refund_eligibility(order, current_time=self.now, **self.configured_policy)
         self.assertTrue(eligible)
         self.assertEqual(amount, Decimal("11188.82"))
         self.assertNotEqual(
             generate_idempotency_key("t", "c", "o", Decimal("1999.99")),
             generate_idempotency_key("t", "c", "o", Decimal("2000.00")),
         )
+
+    def test_missing_return_policy_fails_closed(self):
+        eligible, reason, amount = check_refund_eligibility(
+            self.sample_order, current_time=self.now
+        )
+        self.assertFalse(eligible)
+        self.assertEqual(amount, 0)
+        self.assertIn("policy is not configured", reason)
+
+    def test_empty_excluded_categories_is_explicitly_allowed_by_policy(self):
+        eligible, _, amount = check_refund_eligibility(
+            self.sample_order,
+            current_time=self.now,
+            return_window_days=30,
+            excluded_categories=[],
+        )
+        self.assertTrue(eligible)
+        self.assertEqual(amount, 1499)
 
     def test_evaluate_refund_state_under_limit(self):
         state = evaluate_refund_state(amount_inr=1499, auto_limit_inr=2000)

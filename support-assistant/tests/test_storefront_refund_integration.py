@@ -38,14 +38,15 @@ class FakeOrderPort:
 
 
 class FakeSession:
-    def __init__(self):
+    def __init__(self, policy_config=None):
         self.added = []
+        self.policy_config = policy_config
+        self.execute_count = 0
 
     async def execute(self, _stmt):
-        return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
-
-    async def get(self, _model, _tenant_id):
-        return SimpleNamespace(widget_config={"auto_refund_limit_inr": 2000})
+        self.execute_count += 1
+        row = self.policy_config if self.execute_count == 2 else None
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: row))
 
     def add(self, row):
         self.added.append(row)
@@ -53,7 +54,11 @@ class FakeSession:
 
 class StorefrontRefundIntegrationTests(unittest.TestCase):
     def test_auto_processed_row_has_no_non_staff_decided_by_actor(self):
-        session = FakeSession()
+        session = FakeSession(policy_config=SimpleNamespace(
+            return_window_days=30,
+            excluded_categories=[],
+            auto_refund_limit_inr=2000,
+        ))
         repo = PostgresRefundRepository(FakeOrderPort(), tenant_id="ApexStore")
         repo._create_storefront_refund = AsyncMock(return_value={
             "id": 17,
@@ -83,6 +88,30 @@ class StorefrontRefundIntegrationTests(unittest.TestCase):
         self.assertIsNone(session.added[0].decided_by)
         self.assertEqual(session.added[0].eligibility_snapshot["storefront_refund_id"], "17")
         repo._create_storefront_refund.assert_awaited_once()
+
+    def test_refund_without_confirmed_policy_fails_closed(self):
+        session = FakeSession()
+        repo = PostgresRefundRepository(FakeOrderPort(), tenant_id="ApexStore")
+        repo._create_storefront_refund = AsyncMock(return_value={"id": 17, "amount": 607.38, "status": "Processed"})
+
+        @asynccontextmanager
+        async def fake_session(*, tenant_id):
+            yield session
+
+        with patch("adapters.postgres.refund_repository.get_async_session", fake_session):
+            result = asyncio.run(repo.request_refund(
+                customer_id="42",
+                order_id="ORD-TEST-123",
+                amount_inr=Decimal("607.38"),
+                reason="The product was damaged.",
+                idempotency_key="return-idem-no-policy",
+                customer_token="signed-customer-token",
+                storefront_verification_token="order-scoped-otp-token",
+            ))
+
+        self.assertEqual(result.state, RefundState.REJECTED)
+        self.assertIn("policy is not configured", result.message)
+        repo._create_storefront_refund.assert_not_awaited()
 
     def test_storefront_api_receives_order_items_reason_and_idempotency(self):
         repo = PostgresRefundRepository(FakeOrderPort(), tenant_id="ApexStore")

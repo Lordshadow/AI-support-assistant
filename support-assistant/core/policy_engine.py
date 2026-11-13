@@ -23,8 +23,7 @@ except ImportError:
     )
 
 
-# Tenant-level default policy constants (Configurable)
-DEFAULT_RETURN_WINDOW_DAYS = 30
+# The mock-shop demo policy is explicitly configured in MockRefundAdapter only.
 DEFAULT_REFUND_AUTO_LIMIT_INR = 2000
 DEFAULT_MONTHLY_REFUND_CAP_INR = 5000
 
@@ -57,14 +56,15 @@ def check_refund_eligibility(
     order: Order,
     item_id: Optional[str] = None,
     current_time: Optional[datetime] = None,
-    return_window_days: int = DEFAULT_RETURN_WINDOW_DAYS
+    return_window_days: Optional[int] = None,
+    excluded_categories: Optional[list[str]] = None,
 ) -> tuple[bool, str, int]:
     """
     Pure deterministic eligibility verification:
     1. Order must be in DELIVERED status and must not already be refunded.
-    2. Digital goods and gift cards are strictly non-refundable.
+    2. Categories are excluded only when the tenant has explicitly configured them.
     3. Items cannot be refunded more than once.
-    4. Must fall within the return window (30 days from delivery).
+    4. Must fall within the explicitly configured return window.
 
     Returns:
         tuple[is_eligible: bool, policy_reason: str, eligible_amount_inr: int]
@@ -82,6 +82,9 @@ def check_refund_eligibility(
             f"Order status is '{order.status.value}'. Refunds can only be requested for delivered orders.",
             0
         )
+
+    if return_window_days is None or excluded_categories is None:
+        return False, "Store return/refund policy is not configured. Please contact human support.", 0
 
     now = current_time or datetime.now(timezone.utc)
     if order.delivered_at is None:
@@ -127,10 +130,14 @@ def check_refund_eligibility(
             )
         if not item.refund_eligibility_verified:
             return False, f"Refund eligibility details for '{item.product_name}' could not be verified. Please contact human support.", 0
-        if item.is_digital or item.category.lower() == "digital":
+        item_categories = {item.category.strip().casefold()}
+        if item.is_digital:
+            item_categories.add("digital")
+        configured_exclusions = {category.strip().casefold() for category in excluded_categories if category.strip()}
+        if item_categories.intersection(configured_exclusions):
             return (
                 False,
-                f"Item '{item.product_name}' is a digital product / gift card and is non-refundable once delivered under Store Policy 6.0.",
+                f"Item '{item.product_name}' belongs to a category excluded by the configured store return/refund policy.",
                 0
             )
         eligible_amount += Decimal(str(item.price)) * item.quantity

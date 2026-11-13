@@ -32,7 +32,10 @@ class LanguageNormalizer:
         r"\benna\b", r"\beppo\b", r"\baachu\b", r"\bsollunga\b", r"\bkonjam\b",
         r"\bungaloda\b", r"\bvarum\b", r"\birukku\b", r"\billa\b", r"\bpannunga\b",
         r"\btheriyuma\b", r"\bkidaikkuma\b", r"\bvandhurucha\b", r"\bkaathirukken\b",
-        r"\bvanakkam\b"
+        r"\bvanakkam\b", r"\bpanna\b", r"\bpannalaam\b", r"\bpannitu\b",
+        r"\bvenum\b", r"\bvenama\b", r"\beppadi\b", r"\bepdi\b", r"\bevlo\b",
+        r"\bevvalavu\b", r"\benga\b", r"\baagum\b", r"\baaguma\b", r"\bsollu\b",
+        r"\bkudunga\b", r"\bmudiyuma\b", r"\bmudiyadhu\b", r"\bunga\b"
     ]
 
     # Human escalation trigger words

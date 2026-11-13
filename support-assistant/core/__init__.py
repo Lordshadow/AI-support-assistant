@@ -30,7 +30,6 @@ from .ports import (
 )
 
 from .policy_engine import (
-    DEFAULT_RETURN_WINDOW_DAYS,
     DEFAULT_REFUND_AUTO_LIMIT_INR,
     DEFAULT_MONTHLY_REFUND_CAP_INR,
     require_level,
@@ -62,7 +61,6 @@ __all__ = [
     "RefundPort",
     "ChannelPort",
     "SpeechPort",
-    "DEFAULT_RETURN_WINDOW_DAYS",
     "DEFAULT_REFUND_AUTO_LIMIT_INR",
     "DEFAULT_MONTHLY_REFUND_CAP_INR",
     "require_level",

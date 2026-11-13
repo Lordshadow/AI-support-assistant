@@ -14,8 +14,8 @@ from sqlalchemy import select, update
 
 from core.ports import RefundPort, OrderPort
 from core.models import RefundResult, RefundState
-from core.policy_engine import check_refund_eligibility, evaluate_refund_state, DEFAULT_REFUND_AUTO_LIMIT_INR
-from db.models import RefundRequest, Tenant
+from core.policy_engine import check_refund_eligibility, evaluate_refund_state
+from db.models import RefundRequest, TenantPolicyConfig
 from db.session import get_async_session
 
 logger = logging.getLogger(__name__)
@@ -28,11 +28,9 @@ class PostgresRefundRepository:
         self,
         order_port: OrderPort,
         tenant_id: str = "tenant_novaretail",
-        auto_limit_inr: int = DEFAULT_REFUND_AUTO_LIMIT_INR,
     ):
         self._order_port = order_port
         self.tenant_id = tenant_id
-        self._auto_limit_inr = auto_limit_inr
         # Mock payment status tracker for mock provider integration
         self._payment_transactions: dict[str, str] = {}
 
@@ -73,6 +71,7 @@ class PostgresRefundRepository:
         order_id: str,
         item_id: Optional[str] = None,
         customer_token: Optional[str] = None,
+        _policy_config: Optional[TenantPolicyConfig] = None,
     ) -> tuple[bool, str, Decimal | int]:
         if customer_token:
             order = await self._order_port.get_order(customer_id, order_id, customer_token=customer_token)
@@ -81,8 +80,28 @@ class PostgresRefundRepository:
         if not order:
             return False, f"Order '{order_id}' was not found for this account.", 0
 
+        policy_config = _policy_config
+        if policy_config is None:
+            async with get_async_session(tenant_id=self.tenant_id) as session:
+                policy_stmt = (
+                    select(TenantPolicyConfig)
+                    .where(TenantPolicyConfig.tenant_id == self.tenant_id)
+                    .order_by(TenantPolicyConfig.version.desc())
+                    .limit(1)
+                )
+                policy_config = (await session.execute(policy_stmt)).scalars().first()
+
+        if not policy_config or policy_config.excluded_categories is None:
+            return False, "Store return/refund policy is not configured. Please contact human support.", 0
+
         now = datetime.now(timezone.utc)
-        return check_refund_eligibility(order, item_id=item_id, current_time=now)
+        return check_refund_eligibility(
+            order,
+            item_id=item_id,
+            current_time=now,
+            return_window_days=policy_config.return_window_days,
+            excluded_categories=policy_config.excluded_categories,
+        )
 
     async def request_refund(
         self,
@@ -107,10 +126,28 @@ class PostgresRefundRepository:
             if existing:
                 return self._to_domain(existing)
 
-            # 2. Check Eligibility
-            is_eligible, policy_reason, max_amount = await self.check_eligibility(
-                customer_id, order_id, customer_token=customer_token
+            # Read the policy in this transaction so eligibility and auto-approval
+            # use one confirmed tenant policy version.
+            policy_stmt = (
+                select(TenantPolicyConfig)
+                .where(TenantPolicyConfig.tenant_id == self.tenant_id)
+                .order_by(TenantPolicyConfig.version.desc())
+                .limit(1)
             )
+            policy_config = (await session.execute(policy_stmt)).scalars().first()
+
+            # 2. Check Eligibility
+            if not policy_config or policy_config.excluded_categories is None:
+                is_eligible, policy_reason, max_amount = (
+                    False,
+                    "Store return/refund policy is not configured. Please contact human support.",
+                    0,
+                )
+            else:
+                is_eligible, policy_reason, max_amount = await self.check_eligibility(
+                    customer_id, order_id, customer_token=customer_token,
+                    _policy_config=policy_config,
+                )
             now = datetime.now(timezone.utc)
             refund_id = f"REF-{uuid.uuid4().hex[:8].upper()}"
 
@@ -179,9 +216,19 @@ class PostgresRefundRepository:
                 amount_inr = Decimal(str(storefront_result["amount"])).quantize(Decimal("0.01"))
 
             # 3. Determine initial state using the current tenant policy.
-            tenant = await session.get(Tenant, self.tenant_id)
-            cfg = (tenant.widget_config or {}) if tenant else {}
-            auto_limit = Decimal(str(cfg.get("auto_refund_limit_inr", self._auto_limit_inr)))
+            if not policy_config or policy_config.excluded_categories is None:
+                return RefundResult(
+                    refund_id="POLICY_NOT_CONFIGURED",
+                    order_id=order_id,
+                    customer_id=customer_id,
+                    amount_inr=amount_inr,
+                    state=RefundState.REJECTED,
+                    idempotency_key=idempotency_key,
+                    reason=reason,
+                    message="Store return/refund policy is not configured. Please contact human support.",
+                    created_at=now,
+                )
+            auto_limit = Decimal(str(policy_config.auto_refund_limit_inr))
             if storefront_result and storefront_result.get("status") == "Processed":
                 state = RefundState.PROCESSED
             elif storefront_result and storefront_result.get("status") == "Requested":

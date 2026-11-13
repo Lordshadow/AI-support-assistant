@@ -51,7 +51,12 @@ class TestOrderImportAndOwnership(unittest.TestCase):
         ]), "3")
         self.assertEqual(order.status, OrderStatus.UNKNOWN)
         self.assertIsNone(order.delivered_at)
-        eligible, _, amount = check_refund_eligibility(order, current_time=datetime.now(timezone.utc))
+        eligible, _, amount = check_refund_eligibility(
+            order,
+            current_time=datetime.now(timezone.utc),
+            return_window_days=30,
+            excluded_categories=[],
+        )
         self.assertFalse(eligible)
         self.assertEqual(amount, 0)
 

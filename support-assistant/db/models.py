@@ -108,6 +108,7 @@ class TenantPolicyConfig(Base):
     tenant_id = Column(String(64), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
     auto_refund_limit_inr = Column(Integer(), server_default="2000", nullable=False)
     return_window_days = Column(Integer(), server_default="30", nullable=False)
+    excluded_categories = Column(JSONB, nullable=True)
     max_auto_refund_per_customer_monthly_inr = Column(Integer(), server_default="10000", nullable=False)
     version = Column(Integer(), server_default="1", nullable=False)
     updated_by = Column(String(64), ForeignKey("staff_users.staff_id"), nullable=True)
