@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from html.parser import HTMLParser
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -16,6 +17,33 @@ class CatalogFAQ(BaseModel):
     answer: str = Field(min_length=1, max_length=12000)
 
 
+class _HTMLTextParser(HTMLParser):
+    """Extract readable text from common Shopify/WooCommerce HTML descriptions."""
+
+    _NON_CONTENT_TAGS = {"script", "style", "noscript"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() in self._NON_CONTENT_TAGS:
+            self._skip_depth += 1
+        elif tag.lower() in {"br", "p", "div", "li", "h1", "h2", "h3", "tr"} and self._skip_depth == 0:
+            self.parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in self._NON_CONTENT_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag.lower() in {"p", "div", "li", "h1", "h2", "h3", "tr"} and self._skip_depth == 0:
+            self.parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self.parts.append(data)
+
+
 class CatalogSpec(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
     label: str = Field(min_length=1, max_length=128)
@@ -25,9 +53,11 @@ class CatalogSpec(BaseModel):
     @classmethod
     def model_validate_source(cls, value: Any) -> "CatalogSpec":
         if isinstance(value, dict):
+            options = value.get("options")
+            option_text = ", ".join(str(item).strip() for item in options if str(item).strip()) if isinstance(options, list) else None
             value = {
-                "label": value.get("label") or value.get("key") or value.get("spec_key"),
-                "value": value.get("value") or value.get("spec_value"),
+                "label": value.get("label") or value.get("key") or value.get("spec_key") or value.get("name"),
+                "value": value.get("value") or value.get("spec_value") or option_text,
                 "unit": value.get("unit"),
             }
         return cls.model_validate(value)
@@ -54,22 +84,65 @@ class CatalogProduct(BaseModel):
     def coerce_product_id(cls, value: Any) -> str:
         return str(value).strip() if value is not None else ""
 
+    @staticmethod
+    def _optional_integer_amount(value: Any) -> int | None:
+        """Accept only whole-number amounts for the legacy integer price cache."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value >= 0 else None
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+        return None
+
+    @staticmethod
+    def _optional_stock_flag(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+            if normalized in {"true", "1", "instock", "in_stock", "available"}:
+                return True
+            if normalized in {"false", "0", "outofstock", "out_of_stock", "unavailable"}:
+                return False
+        return None
+
     @classmethod
     def model_validate_source(cls, value: Any) -> "CatalogProduct":
         if not isinstance(value, dict):
             raise ValueError("Catalog product must be an object.")
+        categories = value.get("categories")
+        if isinstance(categories, list):
+            category = " / ".join(
+                str(item.get("name", "")).strip()
+                for item in categories
+                if isinstance(item, dict) and str(item.get("name", "")).strip()
+            )
+        else:
+            category = categories if isinstance(categories, str) else ""
+        specifications = value.get("specifications")
+        if specifications is None:
+            specifications = value.get("attributes") or []
+        description = value.get("description") or value.get("description_html") or value.get("body_html") or ""
+        if isinstance(description, str) and "<" in description and ">" in description:
+            parser = _HTMLTextParser()
+            parser.feed(description)
+            parser.close()
+            description = " ".join(parser.parts)
         return cls.model_validate({
-            "product_id": value.get("product_id", value.get("id")),
-            "name": value.get("name", value.get("title")),
-            "brand": value.get("brand") or "Generic",
-            "category": value.get("category") or "General",
-            "description": value.get("description") or "",
+            "product_id": value.get("product_id") or value.get("id"),
+            "name": value.get("name") or value.get("title"),
+            "brand": value.get("brand") or value.get("vendor") or "Generic",
+            "category": value.get("category") or value.get("product_type") or category or "General",
+            "description": description,
             "faqs": value.get("faqs") or [],
-            "specifications": value.get("specifications") or [],
-            "price": value.get("price"),
-            "discount_price": value.get("discount_price", value.get("sale_price")),
+            "specifications": specifications,
+            "price": cls._optional_integer_amount(value.get("price")),
+            "discount_price": cls._optional_integer_amount(value.get("discount_price", value.get("sale_price"))),
             "currency": value.get("currency") or "INR",
-            "in_stock": value.get("in_stock", value.get("available")),
+            "in_stock": cls._optional_stock_flag(
+                value.get("in_stock", value.get("available", value.get("stock_status")))
+            ),
         })
 
     def normalized_specs(self) -> list[CatalogSpec]:
@@ -80,7 +153,9 @@ class CatalogProduct(BaseModel):
         return list(unique.values())
 
     def content_hash(self) -> str:
-        payload = self.model_dump(mode="json", exclude={"specifications"})
+        payload = self.model_dump(mode="json", exclude={
+            "specifications", "price", "discount_price", "currency", "in_stock",
+        })
         return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 

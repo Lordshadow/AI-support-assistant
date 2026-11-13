@@ -757,7 +757,7 @@ export const KnowledgePage: React.FC = () => {
           <Panel tier="data" notchedLabel="SOURCE PREVIEW" notchedIcon={<Eye className="w-3.5 h-3.5 text-[#3FD2C0]" />}>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
-                <h3 className="font-bold text-[#EAF6F4]">ApexStore catalog</h3>
+                <h3 className="font-bold text-[#EAF6F4]">Store catalog</h3>
                 <p className="text-xs text-[#B6D5D1] mt-1">Read-only preview of names, descriptions, FAQs, and relational specifications.</p>
               </div>
               <div className="flex gap-2">

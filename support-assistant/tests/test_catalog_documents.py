@@ -92,9 +92,40 @@ class TestCatalogDocuments(unittest.TestCase):
         second = CatalogProduct.model_validate_source({**source, "specifications": [{"label": "Weight", "value": "2 kg"}]})
         self.assertEqual(first.content_hash(), second.content_hash())
 
+    def test_live_price_and_stock_changes_do_not_change_knowledge_fingerprint(self):
+        base = {"id": "P1", "name": "Speaker 141", "description": "Clear sound."}
+        first = CatalogProduct.model_validate_source({**base, "price": 1999, "in_stock": True})
+        second = CatalogProduct.model_validate_source({**base, "price": 2999, "in_stock": False})
+        self.assertEqual(first.content_hash(), second.content_hash())
+
     def test_malformed_faq_is_rejected_for_item_level_failure(self):
         with self.assertRaises(Exception):
             CatalogProduct.model_validate_source({"id": "P1", "name": "Speaker", "faqs": ["not a Q&A"]})
+
+    def test_common_store_product_fields_and_html_are_normalized(self):
+        product = CatalogProduct.model_validate_source({
+            "id": 314,
+            "title": "Wireless Speaker",
+            "vendor": "AudioCo",
+            "product_type": "Speakers",
+            "body_html": "<p>Portable sound &amp; clear vocals.</p><script>ignore this</script>",
+            "categories": [{"name": "Audio"}],
+            "attributes": [{"name": "Battery", "options": ["12 hours"]}],
+            "price": "1299.00",
+            "stock_status": "instock",
+        })
+
+        self.assertEqual(product.product_id, "314")
+        self.assertEqual(product.brand, "AudioCo")
+        self.assertEqual(product.category, "Speakers")
+        self.assertIn("Portable sound & clear vocals.", product.description)
+        self.assertNotIn("ignore this", product.description)
+        self.assertEqual(product.normalized_specs()[0].label, "Battery")
+        self.assertEqual(product.normalized_specs()[0].value, "12 hours")
+        self.assertIsNone(product.price)  # Fractional vendor prices are not coerced into the legacy integer cache.
+        self.assertTrue(product.in_stock)
+        chunks = build_product_chunks(product, doc_version="v1")
+        self.assertTrue(all("<p>" not in chunk["text"] for chunk in chunks))
 
 
 if __name__ == "__main__":

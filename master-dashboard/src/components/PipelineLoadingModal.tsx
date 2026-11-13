@@ -46,7 +46,7 @@ const PIPELINE_STAGES: PipelineStage[] = [
     id: 'source',
     stepNumber: 1,
     title: 'Source Extraction',
-    description: 'Streaming catalog records from ApexStore REST API with rate-limiting.',
+    description: 'Streaming catalog records from the configured store API with rate-limiting.',
     icon: <DownloadCloud className="w-4 h-4" />,
     minProgress: 5,
   },
@@ -481,7 +481,7 @@ export const PipelineLoadingModal: React.FC<PipelineLoadingModalProps> = ({
                 </p>
                 {pct >= 20 && (
                   <p className="text-[#3FD2C0]">
-                    [{new Date().toLocaleTimeString('en-IN')}] source_fetch_completed: Streamed {job.stats?.products_seen || 4} products from ApexStore export API
+                    [{new Date().toLocaleTimeString('en-IN')}] source_fetch_completed: Streamed {job.stats?.products_seen ?? 0} products from the configured store API
                   </p>
                 )}
                 {pct >= 50 && (

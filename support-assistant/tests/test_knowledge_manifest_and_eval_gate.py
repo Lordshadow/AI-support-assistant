@@ -353,7 +353,7 @@ Items damaged during transit must be reported within 48 hours with photographic 
             response = self.client.get("/api/admin/v1/knowledge/catalog/preview", headers={"Authorization": "Bearer sess_exec"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["source"], "ApexStore")
+        self.assertEqual(response.json()["source"], "Configured catalog API")
         self.assertEqual(response.json()["total_products"], 1900)
         self.assertEqual(response.json()["sample"][0]["faqs"], sample["faqs"])
 

@@ -5037,3 +5037,37 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**  
 - Rebuild and deploy the assistant API image, then retry the demo policy draft in the Cloud Console dashboard.
+
+## [Task-122] - Generalize catalog API configuration
+**Timestamp:** 2026-11-13 14:53 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- Decouple catalog knowledge ingestion from ApexStore-specific environment variable names and hard-coded endpoint assumptions so a store can use a compatible read-only catalog API.
+- A token alone cannot adapt arbitrary schemas or pagination. Preserve a documented canonical response contract and explicit server-side configuration; use provider adapters or a translation endpoint for incompatible vendor APIs.
+
+**Architectural Boundaries & Modularity:**
+- Keep the existing catalog connector port and ingestion pipeline; do not connect to production databases directly.
+- Preserve the ApexStore variables for the separate order/refund integrations. Add catalog-specific generic variables with backward-compatible fallback.
+- Keep catalog tokens server-side and limit indexed knowledge to stable product prose/FAQs; volatile prices, stock, orders, and customer data remain out of vector ingestion.
+
+**Files Touched:**
+- `support-assistant/ingestion/shop_catalog.py` (Generic paginated REST adapter, multiple auth modes, response paths/headers, bounded retries, duplicate-page protection, and safe ApexStore fallback).
+- `support-assistant/ingestion/catalog_documents.py` (Normalize common Shopify/WooCommerce product fields, description HTML, category/attribute fields, avoid coercing decimal prices into the whole-number cache, and exclude volatile price/stock from the knowledge fingerprint).
+- `support-assistant/services/dashboard_api/knowledge.py` (Generic source label and preview count fallback).
+- `master-dashboard/src/pages/KnowledgePage.tsx`, `master-dashboard/src/components/PipelineLoadingModal.tsx`, `master-dashboard/src/pages/ScriptsPage.tsx` (Remove ApexStore-specific catalog copy).
+- `.env.example`, `docker-compose.yml` (Expose provider-neutral connector settings).
+- `support-assistant/docs/catalog-api-integration.md` (Configuration, contract, limitations, WooCommerce example, and Cloud Run rollout).
+- `support-assistant/tests/test_shop_catalog_connector.py`, `support-assistant/tests/test_catalog_documents.py`, `support-assistant/tests/test_knowledge_manifest_and_eval_gate.py`, `support-assistant/tests/test_sync_job_api.py` (Generic source, auth, pagination, normalization, and preview coverage).
+- `logs.md` (This task record).
+
+**Verification & Quality Assurance:**
+- `python -m unittest -v tests.test_shop_catalog_connector tests.test_catalog_documents tests.test_catalog_client` — 22 tests passed.
+- `python -m py_compile ingestion/shop_catalog.py ingestion/catalog_documents.py services/dashboard_api/knowledge.py tests/test_shop_catalog_connector.py tests/test_catalog_documents.py` — passed.
+- `npm run build` in `master-dashboard` — passed (TypeScript and Vite production build).
+- `git diff --check` — passed.
+
+**Git Commit:**
+- Preparing a path-scoped commit for this task only; unrelated pre-staged workspace changes are excluded. Cloud Run still needs the updated assistant API image and provider configuration.
+
+**Next Planned Task (Awaiting User Permission):**
+- [ ] None; finish implementation and report deployment steps.

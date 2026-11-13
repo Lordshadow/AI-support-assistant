@@ -272,15 +272,16 @@ async def preview_catalog(
     try:
         page = await get_catalog_connector().fetch_page(page=1, limit=5)
         pagination = page.get("pagination") or {}
+        total_products = pagination.get("total")
         return {
-            "source": "ApexStore",
-            "total_products": int(pagination.get("total", len(page["products"]))),
+            "source": "Configured catalog API",
+            "total_products": int(total_products) if total_products is not None else len(page["products"]),
             "sample": page["products"][:5],
             "page_size": int(pagination.get("limit", 5)),
         }
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail=f"Could not preview the ApexStore catalog: {str(exc)[:300]}")
+                            detail=f"Could not preview the configured catalog API: {str(exc)[:300]}")
 
 
 @router.get("/catalog/health")

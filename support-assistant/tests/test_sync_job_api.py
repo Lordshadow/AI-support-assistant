@@ -120,7 +120,9 @@ class TestSyncJobAPI(unittest.TestCase):
             self.assertIn("already running", res2.json()["detail"])
 
     def test_health_check_endpoint(self):
-        with patch("ingestion.shop_catalog.ShopCatalogConnector.fetch_page", new=AsyncMock(return_value={"products": []})):
+        mock_connector = AsyncMock()
+        mock_connector.fetch_page.return_value = {"products": []}
+        with patch("ingestion.shop_catalog.get_catalog_connector", return_value=mock_connector):
             res = self.client.get("/api/admin/v1/knowledge/catalog/health", headers={"Authorization": "Bearer sess_adm"})
             self.assertEqual(res.status_code, 200)
             data = res.json()
