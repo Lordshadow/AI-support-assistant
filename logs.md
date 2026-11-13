@@ -5067,7 +5067,7 @@ ode --check src/bridge.js passed.
 - `git diff --check` — passed.
 
 **Git Commit:**
-- Preparing a path-scoped commit for this task only; unrelated pre-staged workspace changes are excluded. Cloud Run still needs the updated assistant API image and provider configuration.
+- Commit: `d306d2c feat(knowledge): generalize catalog API connector` (path-scoped; unrelated pre-staged changes excluded).
 
 **Next Planned Task (Awaiting User Permission):**
-- [ ] None; finish implementation and report deployment steps.
+- Configure the store-specific `CATALOG_API_*` settings in Secret Manager and Cloud Run, then deploy and validate the API revision.
