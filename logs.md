@@ -5071,3 +5071,29 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task (Awaiting User Permission):**
 - Configure the store-specific `CATALOG_API_*` settings in Secret Manager and Cloud Run, then deploy and validate the API revision.
+
+## [Task-123] - Enforce knowledge-base-only informational answers
+**Timestamp:** 2026-11-13 16:27 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- Prevent unsupported general-knowledge answers like the biography claims in the reported chat. Informational responses must use the tenant's current vector knowledge retrieval; the model's pretrained knowledge and stale FAQ responses are not sources.
+
+**Architectural Boundaries & Modularity:**
+- Keep transactional lookups (orders, refunds, live product price) on their existing operational tools. Require vector knowledge results for informational product/policy answers and abstain when those results are absent.
+- Remove the global FAQ-cache fast path because it could bypass tenant-scoped retrieval and the active knowledge version.
+
+**Files Touched:**
+- `support-assistant/core/router/router.py` (Modified - stop serving cached FAQ answers before current knowledge retrieval).
+- `support-assistant/prompts/orchestrator_system_prompt.md` (Modified - explicitly prohibit model memory/web/history as factual sources and define abstention behavior).
+- `support-assistant/services/worker/orchestrator.py` (Modified - replace ungrounded no-retrieval model answers with a knowledge-base abstention; do not derive focused product claims from catalog details without retrieved documentation).
+- `logs.md` (Appended this task record).
+
+**Verification & Quality Assurance:**
+- `git diff --check` — passed for the changed task files.
+- Automated tests were not run.
+
+**Git Commit:**
+- No commit created.
+
+**Next Planned Task:**
+- Deploy the updated assistant service so the retrieval guard applies to live WhatsApp conversations.

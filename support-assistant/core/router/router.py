@@ -82,18 +82,8 @@ class AIRouter:
                 reason="Matched standard greeting template"
             )
 
-        # 4. Check Cache (e.g. for common FAQ queries)
-        cache_key = CacheService.key_faq("global", norm.cleaned_text)
-        cached = self.cache.get(cache_key)
-        if cached:
-            return RouteDecision(
-                route_type="cache",
-                normalized=norm,
-                cached_response=cached,
-                intent="cached_faq",
-                confidence=1.0,
-                reason="Found exact answer in FAQ cache"
-            )
+        # FAQ response cache is intentionally not used here: it can bypass the
+        # current tenant's vector retrieval and active knowledge version.
 
         # 5. Check Template for Order Status (Zero-Cost Template)
         # If user provides order ID and query is purely tracking status

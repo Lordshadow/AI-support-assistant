@@ -344,6 +344,7 @@ class WorkerOrchestrator:
         completion_tokens = llm_resp.token_usage.get("completion_tokens", 0)
         tool_calls_payload = []
         catalog_detail_results: list[dict[str, Any]] = []
+        knowledge_retrieved = False
         max_tool_steps = 3
         step = 0
         current_resp = llm_resp
@@ -357,6 +358,10 @@ class WorkerOrchestrator:
                 res = await self.dispatcher.execute_tool(tc.name, tc.arguments, ctx)
                 if tc.name == "get_product_details" and isinstance(res, dict):
                     catalog_detail_results.append(res)
+                if tc.name == "search_product_docs" and res.get("chunks"):
+                    knowledge_retrieved = True
+                if tc.name == "search_policy" and res.get("clauses"):
+                    knowledge_retrieved = True
 
                 # Check for step-up auth requirements
                 if res.get("needs_auth") == "otp_required":
@@ -392,11 +397,30 @@ class WorkerOrchestrator:
             final_reply = current_resp.content
 
         final_reply = _repair_missing_catalog_claim(final_reply, catalog_detail_results)
+        # A model response without any authoritative lookup is not a grounded
+        # answer. This catches out-of-domain questions (for example, biographies
+        # absent from the store KB) even if the model answers from prior training.
+        live_data_tools = {
+            "find_product", "get_product_price", "get_order_status", "get_tracking",
+            "list_recent_orders", "check_refund_eligibility", "create_refund_request",
+            "handoff_to_human",
+        }
+        only_live_data_tools = bool(tools_called_log) and set(tools_called_log).issubset(live_data_tools)
+        if (
+            not knowledge_retrieved
+            and not only_live_data_tools
+            and decision.route_type in ("small_model", "large_model")
+        ):
+            final_reply = (
+                "I couldn’t find that information in the store’s knowledge base. "
+                "I can answer questions covered by our product and policy records, "
+                "or connect you with a support agent."
+            )
         asks_for_price = any(
             cue in user_message.lower()
             for cue in ("price", "cost", "how much", "discount", "stock", "available")
         )
-        if catalog_detail_results and not asks_for_price:
+        if catalog_detail_results and knowledge_retrieved and not asks_for_price:
             for detail_result in catalog_detail_results:
                 if detail_result.get("found") is not True or not isinstance(detail_result.get("specs"), dict):
                     continue
