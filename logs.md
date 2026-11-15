@@ -3077,7 +3077,7 @@
 - No live WhatsApp messages were sent.
 
 **Git Commit:**
-- No commit created.
+- Commit: `75b706b fix(assistant): ground informational answers in knowledge retrieval` (pushed to `origin/master`).
 
 **Next Planned Task (Awaiting User Permission):**
 - None; deployment can be completed after Docker access is restored.
