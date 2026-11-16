@@ -5097,3 +5097,24 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Deploy the updated assistant service so the retrieval guard applies to live WhatsApp conversations.
+# [Task-124] - Capture order IDs from query strings in widget context
+**Timestamp:** 2026-11-16 08:39 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- Include a validated `order_id` from order pages such as `/orders?order_id=ORD-...` in chat context so the assistant can target the order the customer is viewing.
+
+**Architectural Boundaries & Modularity:**
+- Keep page context extraction inside the standalone widget; accept only a bounded order ID matching the storefront's `ORD-` identifier format.
+
+**Files Touched:**
+- `support-assistant/static/widget/v1/widget.js` (Modified - read and validate `order_id` from the query string when no ID appears in the path; valid query IDs also set `page_type` to `order_details`).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- Reviewed the focused diff. Automated tests were not run.
+
+**Git Commit:**
+- No commit created.
+
+**Next Planned Task:**
+- Deploy the updated `assistant-api` container so the live `/widget/widget.js` serves the change, then retry order tracking from `/orders?order_id=...`.

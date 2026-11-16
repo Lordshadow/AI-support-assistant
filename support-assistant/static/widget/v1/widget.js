@@ -750,8 +750,14 @@
     const path = window.location.pathname.toLowerCase();
     const productId = configuredProductId ||
       (window.location.pathname.match(/\/products?\/([a-z0-9][a-z0-9_-]{0,63})/i) || [])[1] || null;
-    const orderId =
+    const pathOrderId =
       (window.location.pathname.match(/\/orders?\/(ord-[a-z0-9_-]+)/i) || [])[1] || null;
+    const queryOrderId = new URLSearchParams(window.location.search).get("order_id");
+    const orderId = pathOrderId || (
+      queryOrderId && /^ord-[a-z0-9_-]{1,60}$/i.test(queryOrderId.trim())
+        ? queryOrderId.trim()
+        : null
+    );
     const cartId =
       (window.location.pathname.match(/\/carts?\/(cart-[a-z0-9_-]+)/i) || [])[1] || null;
     let pageType = "other";
