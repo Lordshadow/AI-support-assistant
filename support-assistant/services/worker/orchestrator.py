@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import time
 import json
+import re
 
 from core.models import SessionContext, AuthLevel
 from core.router.router import AIRouter, RouteDecision
@@ -64,6 +65,7 @@ class OrchestratorResponse:
     tools_called: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
     requires_action: Optional[str] = None  # 'needs_otp', 'needs_login', 'disambiguation'
+    step_up_order_id: Optional[str] = None
     trace_id: Optional[str] = None
 
 
@@ -340,6 +342,7 @@ class WorkerOrchestrator:
 
         final_reply = llm_resp.content
         requires_action = None
+        step_up_order_id = None
         prompt_tokens = llm_resp.token_usage.get("prompt_tokens", 0)
         completion_tokens = llm_resp.token_usage.get("completion_tokens", 0)
         tool_calls_payload = []
@@ -369,6 +372,10 @@ class WorkerOrchestrator:
                 # Check for step-up auth requirements
                 if res.get("needs_auth") == "otp_required":
                     requires_action = "needs_otp"
+                    if tc.name == "create_refund_request":
+                        candidate_order_id = str(tc.arguments.get("order_id") or "").strip().upper()
+                        if re.fullmatch(r"ORD-[A-Z0-9_-]{1,60}", candidate_order_id):
+                            step_up_order_id = candidate_order_id.replace("_", "-")
                 elif res.get("needs_auth") == "login_required":
                     requires_action = "needs_login"
 
@@ -472,5 +479,6 @@ class WorkerOrchestrator:
             tools_called=tools_called_log,
             latency_ms=latency,
             requires_action=requires_action,
+            step_up_order_id=step_up_order_id,
             trace_id=turn_id
         )

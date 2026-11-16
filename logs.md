@@ -5236,3 +5236,31 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Deploy the widget change and retry refund step-up from an order page.
+
+## [Task-130] - Carry selected refund order ID into OTP flow
+**Timestamp:** 2026-11-16 12:35 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- A live retry still produced HTTP 422 because the customer’s follow-up message omitted the ID and the page context also lacked it. The assistant had selected the order from earlier conversation context, but did not return that selected ID to the widget.
+
+**Architectural Boundaries & Modularity:**
+- Pass only the validated order ID from the actual `create_refund_request` tool call through the chat response, and use it for the OTP challenge. Storefront ownership checks remain authoritative.
+
+**Files Touched:**
+- `support-assistant/services/worker/orchestrator.py` (Modified - expose the tool-selected order ID only when refund creation requires OTP).
+- `support-assistant/services/assistant_api/gateway_app.py` (Modified - include optional `step_up_order_id` in chat responses).
+- `support-assistant/static/widget/v1/widget.js` (Modified - prefer the structured order ID when requesting refund OTP).
+- `support-assistant/tests/test_worker_orchestrator.py` and `support-assistant/tests/test_widget_security_and_cors.py` (Modified - cover propagation and widget use).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- Refund step-up orchestrator regression test — passed.
+- Widget security/context regression test — passed.
+- `node --check static/widget/v1/widget.js` and `python -m py_compile services/worker/orchestrator.py services/assistant_api/gateway_app.py` — passed.
+- `git diff --check` — passed.
+
+**Git Commit:**
+- Not committed yet.
+
+**Next Planned Task:**
+- Build and deploy `assistant-api`; verify the chat response includes `step_up_order_id` and refund OTP send returns 200.

@@ -192,6 +192,7 @@ class TestWidgetSecurityAndCORS(unittest.TestCase):
         # customer says "refund this order" without typing the ID.
         self.assertIn("function getPendingRefundOrderId()", content)
         self.assertIn("getPageContext().order_id", content)
+        self.assertIn("data.step_up_order_id", content)
 
 
     def test_chat_cors_headers_present_on_500_error(self):

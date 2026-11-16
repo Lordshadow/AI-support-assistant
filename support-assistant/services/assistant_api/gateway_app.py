@@ -61,6 +61,7 @@ class ChatMessageResponse(BaseModel):
     language: str
     auth_level: str
     requires_step_up: bool
+    step_up_order_id: Optional[str] = None
     trace_id: Optional[str] = None
     latency_ms: float = 0.0
 
@@ -290,6 +291,7 @@ class GatewayApp:
             language=orch_response.language,
             auth_level=session.level.value,
             requires_step_up=requires_step_up,
+            step_up_order_id=orch_response.step_up_order_id,
             trace_id=orch_response.trace_id,
             latency_ms=orch_response.latency_ms
         )

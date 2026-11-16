@@ -257,6 +257,7 @@ class TestWorkerOrchestrator(unittest.TestCase):
             "Refund ORD-5501", self.ident_ctx
         ))
         self.assertEqual(resp.requires_action, "needs_otp")
+        self.assertEqual(resp.step_up_order_id, "ORD-5501")
         self.assertIn("verification code (OTP)", resp.reply)
 
     def test_refund_follow_up_reuses_confirmed_order(self):

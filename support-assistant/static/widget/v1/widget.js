@@ -533,6 +533,7 @@
 
   let activeChallengeId = null;
   let pendingStepUpMessage = null;
+  let pendingStepUpOrderId = null;
 
   // 6. Safe Text & Markdown Rendering
   function escapeHtml(str) {
@@ -780,7 +781,7 @@
   function getPendingRefundOrderId() {
     const typedOrderId = pendingStepUpMessage &&
       pendingStepUpMessage.match(/\bORD(?:[-_][A-Z0-9]+|\d+)(?:[-_][A-Z0-9]+)*\b/i);
-    return (typedOrderId && typedOrderId[0]) || getPageContext().order_id || "";
+    return pendingStepUpOrderId || (typedOrderId && typedOrderId[0]) || getPageContext().order_id || "";
   }
 
   // 8. Send Turn to Gateway
@@ -860,6 +861,7 @@
       // Check if step-up OTP challenge requested
       if (data.requires_step_up) {
         pendingStepUpMessage = clean;
+        pendingStepUpOrderId = data.step_up_order_id || null;
         triggerStepUp();
       }
     } catch (err) {
@@ -946,6 +948,7 @@
         activeChallengeId = null;
         const pendingMessage = pendingStepUpMessage;
         pendingStepUpMessage = null;
+        pendingStepUpOrderId = null;
         if (pendingMessage) {
           appendMessage("Email verified. Continuing your request...");
           await sendMessage(pendingMessage, false);
