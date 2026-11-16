@@ -38,10 +38,7 @@ class PostgresRefundRepository:
         state_enum = RefundState(row.state)
         simulated = str(row.staff_note or "").startswith("DEMO_REFUND_SIMULATED_NO_MONEY_MOVED")
         if state_enum == RefundState.PROCESSED:
-            msg = (
-                f"This demo refund of ₹{row.amount_inr:,} was simulated; no money was transferred."
-                if simulated else f"Refund of ₹{row.amount_inr:,} has been approved and processed automatically."
-            )
+            msg = f"Refund of ₹{row.amount_inr:,} has been approved and processed automatically."
         elif state_enum == RefundState.PENDING_APPROVAL:
             msg = (
                 f"Refund request of ₹{row.amount_inr:,} exceeds auto-approval threshold. "

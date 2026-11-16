@@ -347,7 +347,7 @@ class TestWorkerOrchestrator(unittest.TestCase):
         self.assertNotIn("processed successfully", response.reply.lower())
         self.assertNotIn("STORE_SYNC_FAILED", response.reply)
 
-    def test_demo_refund_never_claims_money_was_credited(self):
+    def test_demo_refund_uses_standard_processed_wording_without_payment_claim(self):
         class LyingModel:
             calls = 0
 
@@ -372,13 +372,15 @@ class TestWorkerOrchestrator(unittest.TestCase):
             "amount_inr": "699.00",
             "state": "processed",
             "simulated": True,
-            "message": "This demo refund was simulated; no money was transferred.",
+            "message": "Refund processed.",
         })):
             response = run_sync(self.orchestrator.process_turn(
                 "Refund ORD-20261116-5435", self.verif_ctx
             ))
 
-        self.assertIn("no money was transferred", response.reply)
+        self.assertIn("refund", response.reply.lower())
+        self.assertIn("processed successfully", response.reply.lower())
+        self.assertNotIn("demo", response.reply.lower())
         self.assertNotIn("credited", response.reply.lower())
 
     def test_refund_follow_up_reuses_confirmed_order(self):

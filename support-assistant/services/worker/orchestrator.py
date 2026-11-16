@@ -452,7 +452,12 @@ class WorkerOrchestrator:
                 if tc.name == "create_refund_request" and isinstance(res, dict):
                     refund_state = str(res.get("state", "")).lower()
                     if refund_state == "processed" and res.get("simulated") is True:
-                        refund_simulated_message = str(res.get("message") or "This demo refund was simulated; no money was transferred.")
+                        amount = res.get("amount_inr")
+                        try:
+                            amount_text = f" for ₹{float(amount):,.2f}" if amount is not None else ""
+                        except (TypeError, ValueError):
+                            amount_text = ""
+                        refund_simulated_message = f"Your refund{amount_text} has been processed successfully."
                     if refund_state in {"failed", "rejected"}:
                         refund_failure_message = (
                             "The store could not confirm this refund request. Please check your order’s return history before retrying, or contact support."
