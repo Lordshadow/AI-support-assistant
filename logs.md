@@ -5210,3 +5210,29 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - [ ] Deploy the product grounding fix and verify one product question in the storefront; then investigate refund requests as requested.
+
+## [Task-129] - Pass order page context into refund OTP
+**Timestamp:** 2026-11-16 12:20 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- Refund step-up used the order ID only when the customer typed it in the chat message. On an order detail page, the assistant can resolve the order from page context, but the widget then sent a blank order ID to the OTP endpoint, which rejects it.
+
+**Architectural Boundaries & Modularity:**
+- Reuse the widget's existing validated order page context as an OTP fallback. Prefer an ID explicitly typed in the message so verification remains aligned with the requested order.
+
+**Files Touched:**
+- `support-assistant/static/widget/v1/widget.js` (Modified - choose the typed order ID or page-context order ID for refund OTP).
+- `support-assistant/tests/test_widget_security_and_cors.py` (Modified - regression assertion for the page-context fallback).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- Focused widget invariant test — passed.
+- `node --check static/widget/v1/widget.js` — passed.
+- Full widget test module was interrupted after it stalled in its first pre-existing ASGI test on this Windows asyncio runtime.
+- `git diff --check` — passed.
+
+**Git Commit:**
+- Not committed yet.
+
+**Next Planned Task:**
+- Deploy the widget change and retry refund step-up from an order page.

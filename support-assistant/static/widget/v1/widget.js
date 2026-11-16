@@ -777,6 +777,12 @@
     };
   }
 
+  function getPendingRefundOrderId() {
+    const typedOrderId = pendingStepUpMessage &&
+      pendingStepUpMessage.match(/\bORD(?:[-_][A-Z0-9]+|\d+)(?:[-_][A-Z0-9]+)*\b/i);
+    return (typedOrderId && typedOrderId[0]) || getPageContext().order_id || "";
+  }
+
   // 8. Send Turn to Gateway
   async function sendMessage(text, showUserMessage = true) {
     const clean = (text || "").trim();
@@ -884,7 +890,7 @@
         body: JSON.stringify({
           conv_id: convId,
           tenant_id: tenantId,
-          order_id: (pendingStepUpMessage && pendingStepUpMessage.match(/\bORD(?:[-_][A-Z0-9]+|\d+)(?:[-_][A-Z0-9]+)*\b/i) || [])[0] || "",
+          order_id: getPendingRefundOrderId(),
         }),
       });
       if (resp.ok) {

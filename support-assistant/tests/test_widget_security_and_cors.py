@@ -188,6 +188,11 @@ class TestWidgetSecurityAndCORS(unittest.TestCase):
         self.assertIn("data-tenant", content)
         self.assertIn("data-product-id", content)
 
+        # 5. Refund step-up can use the order ID from an order page when the
+        # customer says "refund this order" without typing the ID.
+        self.assertIn("function getPendingRefundOrderId()", content)
+        self.assertIn("getPageContext().order_id", content)
+
 
     def test_chat_cors_headers_present_on_500_error(self):
         """Verify that HTTP 500 error responses still attach CORS headers for authorized origins."""
