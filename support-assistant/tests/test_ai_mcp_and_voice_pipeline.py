@@ -8,8 +8,11 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import unittest
-from datetime import datetime, timezone
+import uuid
+from unittest.mock import AsyncMock, patch
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -28,7 +31,7 @@ from services.mcp_servers.refund_server import MCPRefundServer
 from services.mcp_servers.handoff_server import MCPHandoffServer
 from services.mcp_servers.dispatcher import MCPToolDispatcher
 from services.mcp_servers.auth import mint_internal_token, ctx_from_token
-from services.worker.orchestrator import WorkerOrchestrator
+from services.worker.orchestrator import OrchestratorResponse, WorkerOrchestrator
 from services.worker.llm_client import MockLLMClient
 from services.assistant_api.gateway_app import GatewayApp, create_default_app
 from services.assistant_api.whatsapp_security import WhatsAppSecurity
@@ -420,6 +423,85 @@ class TestAIMCPAndVoicePipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(replay["status"], "processed")
             self.assertEqual(replay["reply"], data["reply"])
             self.assertEqual(replay["trace_id"], data["trace_id"])
+
+    async def test_openwa_refund_sends_and_verifies_storefront_otp_before_retry(self):
+        """OpenWA must finish the store OTP step and resume only the same customer's refund."""
+        tenant_id = "tenant_novaretail"
+        sender = "919876543210@c.us"
+        conversation_key = f"{tenant_id}:{sender}"
+        conv_id = f"wa_{uuid.uuid5(uuid.NAMESPACE_URL, conversation_key).hex}"
+        auth_key = (tenant_id, conv_id)
+        session = SessionContext(
+            tenant_id=tenant_id,
+            conv_id=conv_id,
+            customer_id="42",
+            level=AuthLevel.IDENTIFIED,
+            channel="whatsapp",
+            storefront_customer_token="signed-storefront-customer-token",
+        )
+        self.gateway._session_store[auth_key] = session
+        self.orchestrator.process_turn = AsyncMock(return_value=OrchestratorResponse(
+            reply="Please verify your email to continue.",
+            route_type="small_model",
+            language="en",
+            model_used="test",
+            requires_action="needs_otp",
+            step_up_order_id="ORD-20261116-5435",
+        ))
+        self.gateway.handle_send_otp = AsyncMock(return_value=(200, {
+            "status": "sent", "challenge_id": "store-test-challenge", "destination": "a***@example.com",
+        }))
+
+        with patch.dict(os.environ, {"NOVARETAIL_TENANT_ID": tenant_id}):
+            first_status, first = await self.gateway.handle_openwa_message({
+                "message_id": "refund-otp-start-001", "sender": sender, "text": "Refund order ORD-20261116-5435",
+            }, "Bearer qa-openwa-bridge-secret-40-characters-long")
+        self.assertEqual(first_status, 200)
+        self.assertIn("6-digit refund verification code", first["reply"])
+        self.gateway.handle_send_otp.assert_awaited_once_with({
+            "tenant_id": tenant_id,
+            "conv_id": conv_id,
+            "order_id": "ORD-20261116-5435",
+        })
+
+        async def verify_challenge(payload):
+            self.assertEqual(payload["tenant_id"], tenant_id)
+            self.assertEqual(payload["conv_id"], conv_id)
+            self.assertEqual(payload["challenge_id"], "store-test-challenge")
+            self.assertEqual(payload["candidate_code"], "123456")
+            self.gateway._session_store[auth_key] = SessionContext(
+                tenant_id=tenant_id,
+                conv_id=conv_id,
+                customer_id="42",
+                level=AuthLevel.VERIFIED,
+                channel="whatsapp",
+                verified_until=datetime.now(timezone.utc) + timedelta(minutes=15),
+                storefront_customer_token="signed-storefront-customer-token",
+                storefront_refund_verification_token="order-scoped-refund-token",
+            )
+            return 200, {"success": True, "auth_level": AuthLevel.VERIFIED.value}
+
+        self.gateway.handle_verify_otp = AsyncMock(side_effect=verify_challenge)
+        self.orchestrator.process_turn = AsyncMock(return_value=OrchestratorResponse(
+            reply="Your refund request has been submitted.",
+            route_type="small_model",
+            language="en",
+            model_used="test",
+        ))
+        with patch.dict(os.environ, {"NOVARETAIL_TENANT_ID": tenant_id}):
+            second_status, second = await self.gateway.handle_openwa_message({
+                "message_id": "refund-otp-code-001", "sender": sender, "text": "123456",
+            }, "Bearer qa-openwa-bridge-secret-40-characters-long")
+
+        self.assertEqual(second_status, 200)
+        self.assertIn("submitted", second["reply"])
+        self.gateway.handle_verify_otp.assert_awaited_once()
+        resumed_context = self.orchestrator.process_turn.await_args.kwargs["ctx"]
+        self.assertEqual(resumed_context.tenant_id, tenant_id)
+        self.assertEqual(resumed_context.customer_id, "42")
+        self.assertEqual(resumed_context.level, AuthLevel.VERIFIED)
+        self.assertEqual(resumed_context.storefront_refund_verification_token, "order-scoped-refund-token")
+        self.assertIn("ORD-20261116-5435", self.orchestrator.process_turn.await_args.kwargs["user_message"])
 
 
 if __name__ == "__main__":

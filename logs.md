@@ -5338,3 +5338,51 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task (Awaiting User Permission):**
 - [ ] Deploy the updated services and enable the explicit demo simulator flags on the ApexStore Cloud Run service.
+
+## [WHATSAPP-ORDERS-2026-11-16-01] - Fix recent order reply formatting
+**Timestamp:** 2026-11-16 16:15:52 Asia/Calcutta
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- Fix WhatsApp recent-order replies showing missing totals and unclear next steps when a customer requests a refund without naming an order.
+
+**Architectural Boundaries & Modularity:**
+- Kept order retrieval and refund eligibility logic unchanged; improved deterministic reply formatting using the existing structured tool result and latest user request.
+
+**Files Touched:**
+- `support-assistant/services/worker/llm_client.py` (Modified - parse string or numeric order totals and ask for an order ID when refund intent led to listing recent orders).
+- `logs.md` (Modified - record this task).
+
+**Verification & Quality Assurance:**
+- Commands executed: targeted read-only tracing; `git diff --check` on touched files.
+- Tests: not run.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task (Awaiting User Permission):**
+- Rebuild and deploy the updated assistant service using the existing Cloud Build/Cloud Run workflow.
+
+## [WHATSAPP-REFUND-SCOPE-2026-11-16-01] - Complete OpenWA refund verification and tenant scoping
+**Timestamp:** 2026-11-16 16:22:48 Asia/Calcutta
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- Make OpenWA refund requests complete the ApexStore email OTP step and scope each WhatsApp session to the configured e-commerce tenant and sender.
+
+**Architectural Boundaries & Modularity:**
+- Reuse the existing storefront OTP send/verify endpoints and refund orchestration. Keep customer identity from the authenticated storefront token; do not allow message text to set tenant or customer identity.
+
+**Files Touched:**
+- `support-assistant/services/assistant_api/gateway_app.py` (Modified - add OpenWA refund OTP send/verify/resume, use configured tenant and tenant-scoped sender conversation ID, clean up canceled challenges).
+- `support-assistant/services/worker/llm_client.py` (Modified - format string-valued store order totals and prompt for order ID on refund intent; carried from preceding task).
+- `support-assistant/prompts/orchestrator_system_prompt.md` (Modified - constrain support answers to the active tenant's live customer/store data and redirect unrelated topics).
+- `support-assistant/tests/test_ai_mcp_and_voice_pipeline.py` (Modified - add focused OpenWA OTP flow regression test).
+
+**Verification & Quality Assurance:**
+- Commands executed: Python `py_compile` for the changed gateway, worker, and test modules (passed); `git diff --check` on task files (passed); targeted source tracing.
+- Tests: focused refund regression test attempted but blocked by this host's Python 3.15 Windows asyncio Proactor hanging while constructing its socketpair, before the test setup executes. The code is not claimed as regression-test passed.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task:**
+- Build/deploy the updated assistant API through the existing Cloud Build/Cloud Run flow and verify an eligible WhatsApp refund end-to-end. OTP challenge/session state is currently in-memory and can be lost across Cloud Run instance changes; for dependable production traffic it should be persisted/shared. A real payment refund also requires the ApexStore payment processor to be configured; store/API rejection must remain a failure, never be reported as money returned.

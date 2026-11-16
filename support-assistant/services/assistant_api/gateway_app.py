@@ -136,6 +136,7 @@ class GatewayApp:
         self._session_store: Dict[Tuple[str, str], SessionContext] = {}
         self._storefront_otp_challenges: Dict[str, Tuple[str, str, str]] = {}
         self._openwa_auth_challenges: Dict[Tuple[str, str], str] = {}
+        self._openwa_refund_challenges: Dict[Tuple[str, str], Dict[str, str]] = {}
 
     def is_origin_allowed(self, tenant_id: str, origin: Optional[str]) -> bool:
         """
@@ -494,9 +495,13 @@ class GatewayApp:
         if not user_message.strip():
             return 200, {"status": "empty_message", "reply": "Please send a text message or a voice note."}
 
-        conv_id = f"wa_{sender}"
-        session = self.get_or_create_session("demo-shop", conv_id, auth_header=None, channel="whatsapp")
-        auth_key = ("demo-shop", conv_id)
+        tenant_id = os.getenv("NOVARETAIL_TENANT_ID", "tenant_novaretail").strip()
+        if not tenant_id:
+            return 503, {"detail": "The WhatsApp store tenant is not configured."}
+        conversation_key = f"{tenant_id}:{sender}"
+        conv_id = f"wa_{uuid.uuid5(uuid.NAMESPACE_URL, conversation_key).hex}"
+        session = self.get_or_create_session(tenant_id, conv_id, auth_header=None, channel="whatsapp")
+        auth_key = (tenant_id, conv_id)
         storefront_url = os.getenv("APEXSTORE_CATALOG_API_URL", "").rstrip("/")
         storefront_api_key = os.getenv("APEXSTORE_CATALOG_API_TOKEN", "").strip()
         email_match = re.fullmatch(r"(?:login|verify account|account)\s+([^\s@]+@[^\s@]+)", user_message.strip(), re.IGNORECASE)
@@ -561,12 +566,93 @@ class GatewayApp:
             response = {"status": "processed", "message_id": message_id, "reply": auth_reply, "language": language}
             self._openwa_processed_ids[message_id] = response
             return 200, response
+
+        pending_refund = self._openwa_refund_challenges.get(auth_key)
+        if code_match and pending_refund:
+            verify_status, verification = await self.handle_verify_otp({
+                "challenge_id": pending_refund["challenge_id"],
+                "candidate_code": code_match.group(1),
+                "tenant_id": tenant_id,
+                "conv_id": conv_id,
+            })
+            language = pending_refund.get("language", "en")
+            if verify_status != 200 or not verification.get("success"):
+                invalid_reply = {
+                    "ta": "அந்த குறியீடு தவறானது அல்லது காலாவதியானது. சரியான 6 இலக்க குறியீட்டை அனுப்புங்கள்.",
+                    "tanglish": "Andha code thappa irukku illa expire aayiduchu. Correct 6 digit code-a anuppunga.",
+                }.get(language, "That code is invalid or expired. Please check it and send the 6-digit code again.")
+                response = {"status": "processed", "message_id": message_id, "reply": invalid_reply, "language": language}
+                self._openwa_processed_ids[message_id] = response
+                return 200, response
+
+            self._openwa_refund_challenges.pop(auth_key, None)
+            verified_session = self.get_or_create_session(tenant_id, conv_id, auth_header=None, channel="whatsapp")
+            order_id = pending_refund["order_id"]
+            if language == "ta":
+                continuation = f"ரீஃபண்ட் கோரிக்கையைத் தொடரவும்: {order_id}. refund OTP verified."
+            elif language == "tanglish":
+                continuation = f"Refund request continue pannunga: {order_id}. OTP verified."
+            else:
+                continuation = f"Please continue the refund request for {order_id}. The OTP is verified."
+            result = await self.orchestrator.process_turn(user_message=continuation, ctx=verified_session)
+            response = {
+                "status": "processed", "message_id": message_id, "reply": result.reply,
+                "language": result.language, "trace_id": result.trace_id,
+            }
+            self._openwa_processed_ids[message_id] = response
+            return 200, response
+
+        if pending_refund and not code_match:
+            language = pending_refund.get("language", "en")
+            waiting_reply = {
+                "ta": "ரீஃபண்ட் கோரிக்கை இன்னும் சமர்ப்பிக்கப்படவில்லை. மின்னஞ்சலுக்கு வந்த 6 இலக்க குறியீட்டை அனுப்புங்கள் அல்லது ரத்து செய்ய ‘cancel’ என்று அனுப்புங்கள்.",
+                "tanglish": "Refund request innum submit aagala. Email-la vandha 6 digit code-a anuppunga, illa cancel panna ‘cancel’ nu anuppunga.",
+            }.get(language, "The refund request has not been submitted yet. Reply with the 6-digit email code, or type ‘cancel’ to stop.")
+            if user_message.strip().casefold() in {"cancel", "stop", "ரத்து", "cancel pannunga"}:
+                self._openwa_refund_challenges.pop(auth_key, None)
+                self._storefront_otp_challenges.pop(pending_refund["challenge_id"], None)
+                waiting_reply = {
+                    "ta": "சரி, இந்த ரீஃபண்ட் முயற்சியை நிறுத்திவிட்டேன். கோரிக்கை சமர்ப்பிக்கப்படவில்லை.",
+                    "tanglish": "Seri, indha refund attempt-a stop pannitten. Request submit pannala.",
+                }.get(language, "Okay, I stopped this refund attempt. The request was not submitted.")
+            response = {"status": "processed", "message_id": message_id, "reply": waiting_reply, "language": language}
+            self._openwa_processed_ids[message_id] = response
+            return 200, response
+
         self._openwa_inflight_ids.add(message_id)
         try:
             result = await self.orchestrator.process_turn(user_message=user_message, ctx=session)
         finally:
             self._openwa_inflight_ids.discard(message_id)
-        response = {"status": "processed", "message_id": message_id, "reply": result.reply,
+
+        reply = result.reply
+        if result.requires_action == "needs_otp" and result.step_up_order_id:
+            try:
+                send_status, challenge = await self.handle_send_otp({
+                    "tenant_id": tenant_id,
+                    "conv_id": conv_id,
+                    "order_id": result.step_up_order_id,
+                })
+            except Exception:
+                logger.exception("Could not start OpenWA refund verification")
+                send_status, challenge = 503, {}
+            if send_status == 200 and challenge.get("status") == "sent":
+                self._openwa_refund_challenges[auth_key] = {
+                    "challenge_id": str(challenge["challenge_id"]),
+                    "order_id": result.step_up_order_id,
+                    "language": result.language,
+                }
+                reply = {
+                    "ta": f"உங்கள் கணக்கின் மின்னஞ்சலுக்கு 6 இலக்க ரீஃபண்ட் சரிபார்ப்புக் குறியீட்டை அனுப்பியுள்ளேன். அதை இங்கே அனுப்புங்கள்; சரிபார்த்த பிறகே கோரிக்கை சமர்ப்பிக்கப்படும்.",
+                    "tanglish": "Unga account email-ku 6 digit refund verification code anuppirukken. Andha code-a inga anuppunga; verify aana apram dhaan request submit aagum.",
+                }.get(result.language, f"I sent a 6-digit refund verification code to {challenge.get('destination', 'your account email')}. Reply with that code; I’ll submit the request only after it is verified.")
+            else:
+                reply = {
+                    "ta": "ரீஃபண்ட் சரிபார்ப்புக் குறியீட்டை அனுப்ப முடியவில்லை. எந்த ரீஃபண்ட் கோரிக்கையும் சமர்ப்பிக்கப்படவில்லை. சிறிது நேரம் கழித்து முயற்சிக்கவும்.",
+                    "tanglish": "Refund verification code anuppa mudiyala. Refund request submit aagala. Konjam neram kazhichu try pannunga.",
+                }.get(result.language, "I couldn’t send the refund verification code, so the refund request was not submitted. Please try again later.")
+
+        response = {"status": "processed", "message_id": message_id, "reply": reply,
                     "language": result.language, "trace_id": result.trace_id}
         if transcription_info:
             response["transcription"] = transcription_info

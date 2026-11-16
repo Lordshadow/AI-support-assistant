@@ -645,23 +645,33 @@ class MockLLMClient:
             if not orders_list:
                 answer_parts.append("You have no recent orders in your account.")
             else:
+                latest_user_message = next(
+                    (str(m.get("content", "")) for m in reversed(messages) if m.get("role") == "user"),
+                    "",
+                )
+                is_refund_followup = bool(re.search(r"\b(refund|return)\b", latest_user_message, re.I))
                 rows = []
                 for o in orders_list:
                     oid = o.get("order_id")
                     st = o.get("status")
                     items = ", ".join(o.get("item_names") or [])
                     total = o.get("total_amount_inr")
-                    total_str = f"₹{total:,}" if isinstance(total, (int, float)) else ""
+                    total_str = _format_inr_amount(total)
                     date_str = o.get("created_at", "")
-                    rows.append(f"| **{oid}** | {items or '—'} | {total_str or '—'} | **{st}** | {date_str} |")
-                table_md = (
-                    "Here are your recent orders:\n\n"
-                    "| Order ID | Items | Total | Status | Date |\n"
-                    "| :--- | :--- | :--- | :--- | :--- |\n"
-                    + "\n".join(rows)
-                    + "\n\nLet me know if you would like tracking details, return eligibility, or assistance with any of these orders."
+                    rows.append(
+                        f"Order: **{oid}**\n"
+                        f"Items: {items or 'Not listed'}\n"
+                        f"Total: {total_str or 'Not available'}\n"
+                        f"Status: **{st or 'Unknown'}**\n"
+                        f"Date: {date_str or 'Not available'}"
+                    )
+                followup = (
+                    "To check a refund or return, reply with the order ID you want me to review. "
+                    "I’ll check its eligibility first."
+                    if is_refund_followup else
+                    "Tell me an order ID if you want tracking details or return eligibility checked."
                 )
-                answer_parts.append(table_md)
+                answer_parts.append("Here are your recent orders:\n\n" + "\n\n".join(rows) + "\n\n" + followup)
 
         if answer_parts:
             return LLMResponse(content=" ".join(answer_parts), model_used=self.default_model)
