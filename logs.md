@@ -5140,3 +5140,25 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Build and deploy the updated `assistant-api`, then verify that order-page tracking calls `get_order_status` with the current page's order ID.
+
+## [Task-126] - Add safe diagnostics for storefront order lookup
+**Timestamp:** 2026-11-16 10:50 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- The browser sends the correct order ID and the storefront API URL/credential are configured, but logs show no assistant-originated order request. Record whether the order adapter has the customer token/config and the upstream HTTP outcome without logging secrets or request URLs.
+
+**Architectural Boundaries & Modularity:**
+- Keep diagnostics in the order repository and log only boolean configuration state, HTTP status, and exception class. Never log customer tokens or request query strings.
+
+**Files Touched:**
+- `support-assistant/adapters/postgres/order_repository.py` (Modified - log when external lookup is skipped, its HTTP status, or a sanitized exception class; no order/token/URL data is logged).
+- `logs.md` (Modified - task progress record).
+
+**Verification & Quality Assurance:**
+- Reviewed the focused diff and ran `git diff --check` on the changed files. Automated tests were not run.
+
+**Git Commit:**
+- `9a215f7 chore(orders): log safe storefront lookup diagnostics`.
+
+**Next Planned Task:**
+- Build and deploy the diagnostic revision, then inspect `assistant-api` logs during a single order lookup.

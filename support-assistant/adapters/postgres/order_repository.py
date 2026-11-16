@@ -178,6 +178,11 @@ class PostgresOrderRepository:
         self, customer_id: str, order_id: str, customer_token: Optional[str] = None
     ) -> Optional[Order]:
         if not self.store_api_url or not self.store_api_token:
+            logger.warning(
+                "Storefront order lookup skipped: api_url_configured=%s api_token_configured=%s",
+                bool(self.store_api_url),
+                bool(self.store_api_token),
+            )
             return None
         url = f"{self.store_api_url}/orders/{order_id}"
         headers = {"Authorization": f"Bearer {self.store_api_token}"}
@@ -188,16 +193,24 @@ class PostgresOrderRepository:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 res = await client.get(url, headers=headers, params=params)
                 if res.status_code != 200:
+                    logger.warning(
+                        "Storefront order lookup returned HTTP %s.", res.status_code
+                    )
                     return None
                 data = res.json()
                 order_data = data.get("order")
                 if not order_data:
+                    logger.warning(
+                        "Storefront order lookup returned HTTP 200 without an order object."
+                    )
                     return None
                 dom = self._dict_to_domain(order_data, customer_id)
                 await self._save_order_to_db(dom)
                 return dom
-        except Exception as e:
-            logger.debug("Store API get_order fallback failed: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Storefront order lookup failed with %s.", type(exc).__name__
+            )
             return None
 
     async def get_order(
@@ -209,6 +222,9 @@ class PostgresOrderRepository:
         # verifier. Never fall back to cached local rows if that check fails.
         if customer_token:
             return await self._fetch_from_store_api(cid, oid, customer_token=customer_token)
+        logger.warning(
+            "Storefront customer token unavailable for order lookup; using local tenant data."
+        )
         try:
             async with get_async_session(tenant_id=self.tenant_id) as session:
                 stmt = (
