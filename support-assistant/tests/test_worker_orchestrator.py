@@ -260,6 +260,69 @@ class TestWorkerOrchestrator(unittest.TestCase):
         self.assertEqual(resp.step_up_order_id, "ORD-5501")
         self.assertIn("verification code (OTP)", resp.reply)
 
+    def test_order_id_after_refund_prompt_continues_refund_instead_of_tracking(self):
+        context = SessionContext(
+            tenant_id="demo",
+            conv_id="refund-order-selection",
+            customer_id="CUST-42",
+            level=AuthLevel.IDENTIFIED,
+        )
+        self.orchestrator._conversation_history[context.conv_id] = [
+            {"role": "user", "content": "refund order"},
+            {"role": "assistant", "content": "Here are your recent orders. Tell me the Order ID and I’ll start the refund process."},
+        ]
+
+        async def refund_tool(name, arguments, _ctx):
+            if name == "check_refund_eligibility":
+                return {"order_id": "ORD-20261116-5435", "is_eligible": True, "eligible_amount_inr": "699.00"}
+            if name == "create_refund_request":
+                return {"needs_auth": "otp_required", "message": "Please verify the refund using the code sent to your account email."}
+            self.fail(f"Unexpected tool call: {name}")
+
+        with patch.object(self.dispatcher, "execute_tool", new=AsyncMock(side_effect=refund_tool)) as execute_tool:
+            response = run_sync(self.orchestrator.process_turn("ORD-20261116-5435", context))
+
+        self.assertEqual(response.requires_action, "needs_otp")
+        self.assertEqual(response.step_up_order_id, "ORD-20261116-5435")
+        self.assertNotIn("get_order_status", response.tools_called)
+        self.assertEqual([call.args[0] for call in execute_tool.await_args_list], [
+            "check_refund_eligibility", "create_refund_request"
+        ])
+
+    def test_refund_store_failure_never_claims_success(self):
+        class LyingModel:
+            calls = 0
+
+            async def chat(self, messages, tools=None, model_tier="small"):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content=None,
+                        tool_calls=[ToolCall(
+                            call_id="store-refund-failed",
+                            name="create_refund_request",
+                            arguments={"order_id": "ORD-20261116-5435", "reason": "dead on arrival"},
+                        )],
+                        model_used="test-model",
+                    )
+                return LLMResponse(content="Your refund was processed successfully!", model_used="test-model")
+
+        self.orchestrator.llm = LyingModel()
+        with patch.object(self.dispatcher, "execute_tool", new=AsyncMock(return_value={
+            "refund_id": "STORE_SYNC_FAILED",
+            "order_id": "ORD-20261116-5435",
+            "amount_inr": "699.00",
+            "state": "failed",
+            "message": "The store could not confirm this return.",
+        })):
+            response = run_sync(self.orchestrator.process_turn(
+                "Refund ORD-20261116-5435 because it was dead on arrival", self.verif_ctx
+            ))
+
+        self.assertIn("could not confirm", response.reply)
+        self.assertNotIn("processed successfully", response.reply.lower())
+        self.assertNotIn("STORE_SYNC_FAILED", response.reply)
+
     def test_refund_follow_up_reuses_confirmed_order(self):
         run_sync(self.orchestrator.process_turn(
             "Refund ORD-5501 defective earbuds", self.ident_ctx

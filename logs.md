@@ -5264,3 +5264,29 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Build and deploy `assistant-api`; verify the chat response includes `step_up_order_id` and refund OTP send returns 200.
+
+## [Task-131] - Prevent false refund success and preserve refund selection
+**Timestamp:** 2026-11-16 13:05 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- A live trace returned `state=failed` with `refund_id=STORE_SYNC_FAILED`, while the assistant claimed the refund was processed. The same conversation also treated a bare order ID as a tracking request after the customer had selected it for a refund.
+
+**Architectural Boundaries & Modularity:**
+- Treat the store's refund state as authoritative; never infer success from any non-pending state. Continue refund intent only when recent conversation history contains an explicit refund request and the assistant asked the customer to select an order. The standard OTP and storefront ownership checks remain in force.
+
+**Files Touched:**
+- `support-assistant/services/worker/orchestrator.py` (Modified - route contextual order selection into eligibility/refund tools, block create after failed eligibility, and override model success claims on failed/rejected store results).
+- `support-assistant/services/worker/llm_client.py` (Modified - synthesize refund responses according to explicit processed/pending/rejected/failed states).
+- `support-assistant/tests/test_worker_orchestrator.py` (Modified - cover selected-order continuation and failed-store-sync response).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- Focused refund tests — 3/3 passed, including OTP step-up, selection continuation, and failed-sync no-success claim.
+- Python compile and widget JavaScript syntax checks — passed.
+- `git diff --check` — passed.
+
+**Git Commit:**
+- Not committed yet.
+
+**Next Planned Task:**
+- Deploy this fix and inspect assistant-api logs for the exact storefront HTTP status that caused `STORE_SYNC_FAILED`.

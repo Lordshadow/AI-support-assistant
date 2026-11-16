@@ -675,7 +675,19 @@ class MockLLMClient:
                     ),
                     model_used=self.default_model
                 )
-            else:
+            if state == "failed":
+                return LLMResponse(
+                    content=refund_create_result.get("message") or (
+                        "The store could not confirm this refund request. Please check your order’s return history before retrying, or contact support."
+                    ),
+                    model_used=self.default_model,
+                )
+            if state == "rejected":
+                return LLMResponse(
+                    content=refund_create_result.get("message") or "This order was not eligible for a refund request.",
+                    model_used=self.default_model,
+                )
+            if state == "processed":
                 return LLMResponse(
                     content=(
                         f"Your refund **{rid}** for {amt_str} has been processed successfully!\n\n"
@@ -683,6 +695,10 @@ class MockLLMClient:
                     ),
                     model_used=self.default_model
                 )
+            return LLMResponse(
+                content=refund_create_result.get("message") or "The store has not confirmed the refund status yet. Please check your return history or contact support.",
+                model_used=self.default_model,
+            )
 
         refund_elig_result = next((r for r in tool_results if "is_eligible" in r), None)
         if refund_elig_result:

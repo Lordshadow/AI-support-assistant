@@ -18,6 +18,7 @@ from core.router.router import AIRouter, RouteDecision
 from services.mcp_servers.dispatcher import MCPToolDispatcher
 from services.worker.llm_client import (
     LLMClient,
+    LLMResponse,
     MockLLMClient,
     ToolCall,
     _focused_product_spec_answer,
@@ -309,9 +310,28 @@ class WorkerOrchestrator:
             )
             system_content = system_content + session_snippet
 
+        conversation_history = self._history_for(ctx.conv_id)
+        refund_order_followup_id = None
+        bare_order_id = re.fullmatch(r"\s*(ORD[-_][A-Za-z0-9_-]+)\s*[.!]?\s*", user_message, re.I)
+        if bare_order_id:
+            recent_history = conversation_history[-8:]
+            prior_refund_intent = any(
+                entry.get("role") == "user"
+                and re.search(r"\b(refund|return)\b", str(entry.get("content", "")), re.I)
+                for entry in recent_history
+            )
+            assistant_requested_selection = any(
+                entry.get("role") == "assistant"
+                and re.search(r"\b(refund|return)\b", str(entry.get("content", "")), re.I)
+                and re.search(r"\b(order id|which order|tell me the order|return eligibility|start the refund)\b", str(entry.get("content", "")), re.I)
+                for entry in recent_history
+            )
+            if prior_refund_intent and assistant_requested_selection:
+                refund_order_followup_id = bare_order_id.group(1).upper().replace("_", "-")
+
         messages = [
             {"role": "system", "content": system_content},
-            *self._history_for(ctx.conv_id),
+            *conversation_history,
             {"role": "user", "content": user_message}
         ]
         if ctx.page_context:
@@ -331,11 +351,29 @@ class WorkerOrchestrator:
         # First LLM Call: Plan tools or reply
         model_tier = "large" if decision.route_type == "large_model" else "small"
         try:
-            llm_resp = await self.llm.chat(
-                messages=messages,
-                tools=self.dispatcher.get_tool_schemas(),
-                model_tier=model_tier
-            )
+            if refund_order_followup_id:
+                llm_resp = LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            call_id="refund-selection-eligibility",
+                            name="check_refund_eligibility",
+                            arguments={"order_id": refund_order_followup_id},
+                        ),
+                        ToolCall(
+                            call_id="refund-selection-create",
+                            name="create_refund_request",
+                            arguments={"order_id": refund_order_followup_id, "reason": "Customer requested a return/refund."},
+                        ),
+                    ],
+                    model_used="refund-selection-router",
+                )
+            else:
+                llm_resp = await self.llm.chat(
+                    messages=messages,
+                    tools=self.dispatcher.get_tool_schemas(),
+                    model_tier=model_tier
+                )
         except Exception:
             spend_manager.release_reservation(ctx.tenant_id)
             raise
@@ -349,6 +387,9 @@ class WorkerOrchestrator:
         catalog_detail_results: list[dict[str, Any]] = []
         catalog_details_grounded = False
         knowledge_retrieved = False
+        refund_eligibility_by_order: dict[str, dict[str, Any]] = {}
+        refund_ineligible_message: Optional[str] = None
+        refund_failure_message: Optional[str] = None
         max_tool_steps = 3
         step = 0
         current_resp = llm_resp
@@ -359,7 +400,24 @@ class WorkerOrchestrator:
             for tc in current_resp.tool_calls:
                 tools_called_log.append(tc.name)
                 tool_calls_payload.append({"call_id": tc.call_id, "name": tc.name, "arguments": tc.arguments})
-                res = await self.dispatcher.execute_tool(tc.name, tc.arguments, ctx)
+                call_order_id = str(tc.arguments.get("order_id") or "").strip().upper()
+                if tc.name == "create_refund_request" and refund_eligibility_by_order.get(call_order_id, {}).get("is_eligible") is False:
+                    eligibility = refund_eligibility_by_order[call_order_id]
+                    reason = str(eligibility.get("policy_reason") or "the order does not meet the return requirements")
+                    refund_ineligible_message = f"I’m sorry, but order **{call_order_id}** is not eligible for a refund. Reason: {reason}"
+                    res = {"order_id": call_order_id, "state": "rejected", "message": refund_ineligible_message}
+                else:
+                    res = await self.dispatcher.execute_tool(tc.name, tc.arguments, ctx)
+                if tc.name == "check_refund_eligibility" and isinstance(res, dict):
+                    refund_eligibility_by_order[call_order_id] = res
+                if tc.name == "create_refund_request" and isinstance(res, dict):
+                    refund_state = str(res.get("state", "")).lower()
+                    if refund_state in {"failed", "rejected"}:
+                        refund_failure_message = (
+                            "The store could not confirm this refund request. Please check your order’s return history before retrying, or contact support."
+                            if refund_state == "failed"
+                            else str(res.get("message") or "This order was not eligible for a refund request.")
+                        )
                 if tc.name == "get_product_details" and isinstance(res, dict):
                     catalog_detail_results.append(res)
                     if res.get("found") is True:
@@ -443,6 +501,11 @@ class WorkerOrchestrator:
                 if focused_answer:
                     final_reply = focused_answer
                     break
+
+        if refund_ineligible_message:
+            final_reply = refund_ineligible_message
+        elif refund_failure_message:
+            final_reply = refund_failure_message
 
         latency = round((time.perf_counter() - start_time) * 1000, 2)
 
