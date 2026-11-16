@@ -347,6 +347,40 @@ class TestWorkerOrchestrator(unittest.TestCase):
         self.assertNotIn("processed successfully", response.reply.lower())
         self.assertNotIn("STORE_SYNC_FAILED", response.reply)
 
+    def test_demo_refund_never_claims_money_was_credited(self):
+        class LyingModel:
+            calls = 0
+
+            async def chat(self, messages, tools=None, model_tier="small"):
+                self.calls += 1
+                if self.calls == 1:
+                    return LLMResponse(
+                        content=None,
+                        tool_calls=[ToolCall(
+                            call_id="store-refund-demo",
+                            name="create_refund_request",
+                            arguments={"order_id": "ORD-20261116-5435", "reason": "demo request"},
+                        )],
+                        model_used="test-model",
+                    )
+                return LLMResponse(content="The money has been credited to your card.", model_used="test-model")
+
+        self.orchestrator.llm = LyingModel()
+        with patch.object(self.dispatcher, "execute_tool", new=AsyncMock(return_value={
+            "refund_id": "REF-DEMO",
+            "order_id": "ORD-20261116-5435",
+            "amount_inr": "699.00",
+            "state": "processed",
+            "simulated": True,
+            "message": "This demo refund was simulated; no money was transferred.",
+        })):
+            response = run_sync(self.orchestrator.process_turn(
+                "Refund ORD-20261116-5435", self.verif_ctx
+            ))
+
+        self.assertIn("no money was transferred", response.reply)
+        self.assertNotIn("credited", response.reply.lower())
+
     def test_refund_follow_up_reuses_confirmed_order(self):
         run_sync(self.orchestrator.process_turn(
             "Refund ORD-5501 defective earbuds", self.ident_ctx

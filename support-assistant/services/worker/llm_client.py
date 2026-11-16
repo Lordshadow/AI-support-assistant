@@ -503,6 +503,8 @@ class MockLLMClient:
         if refund_result:
             state = str(refund_result.get("state", "")).lower()
             if state == "processed":
+                if refund_result.get("simulated") is True:
+                    return LLMResponse(content=refund_result.get("message") or "This demo refund was simulated; no money was transferred.", model_used=self.default_model)
                 amount = refund_result.get("amount_inr")
                 amount_text = f" for ₹{amount:,}" if isinstance(amount, (int, float)) else ""
                 return LLMResponse(content=f"Your refund{amount_text} was approved automatically and initiated to your original payment method. It should arrive in 3–5 business days.", model_used=self.default_model)
@@ -688,6 +690,11 @@ class MockLLMClient:
                     model_used=self.default_model,
                 )
             if state == "processed":
+                if refund_create_result.get("simulated") is True:
+                    return LLMResponse(
+                        content=refund_create_result.get("message") or f"Your demo refund **{rid}** for {amt_str} was simulated successfully. No money was transferred.",
+                        model_used=self.default_model,
+                    )
                 return LLMResponse(
                     content=(
                         f"Your refund **{rid}** for {amt_str} has been processed successfully!\n\n"

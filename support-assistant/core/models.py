@@ -180,6 +180,7 @@ class RefundResult:
     decided_by: Optional[str] = None
     decided_at: Optional[datetime] = None
     note: Optional[str] = None
+    simulated: bool = False
 
 
 # Domain Exceptions

@@ -5314,3 +5314,27 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Verify the new confirmation path, commit and push, then rebuild/deploy and inspect the storefront processor failure separately.
+
+## REFUND-DEMO-20261116 - Explicit demo refund simulator and truthful assistant replies
+**Timestamp:** 2026-11-16 13:14:02 Asia/Calcutta
+**Status:** VERIFIED (focused checks passed; full-suite caveat below)
+**Objective & Rationale ("Why"):**
+- Fix demo refunds with no configured payment processor, while ensuring the assistant never implies that simulated money was transferred.
+
+**Architectural Boundaries & Modularity:**
+- Ecommerce API owns the opt-in demo payment adapter and persists a clear simulation marker.
+- Assistant adapter maps the store marker into the domain and worker response, retaining the existing eligibility and OTP flow.
+
+**Files Touched:**
+- `support-assistant/core/models.py`, `support-assistant/adapters/postgres/refund_repository.py`, `support-assistant/services/mcp_servers/refund_server.py`, `support-assistant/services/worker/llm_client.py`, `support-assistant/services/worker/orchestrator.py` (simulation metadata and transparent customer responses).
+- `support-assistant/tests/test_storefront_refund_integration.py`, `support-assistant/tests/test_worker_orchestrator.py` (focused regression cases).
+
+**Verification & Quality Assurance:**
+- Commands executed: targeted Python demo-refund marker test (passed); targeted worker orchestration test (passed); Python compileall and `git diff --check` (passed).
+- Full Python module execution stalled in an existing storefront integration test; the new targeted tests passed.
+
+**Git Commit:**
+- Not committed. The working tree has unrelated staged changes; none were included.
+
+**Next Planned Task (Awaiting User Permission):**
+- [ ] Deploy the updated services and enable the explicit demo simulator flags on the ApexStore Cloud Run service.

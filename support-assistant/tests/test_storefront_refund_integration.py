@@ -53,6 +53,18 @@ class FakeSession:
 
 
 class StorefrontRefundIntegrationTests(unittest.TestCase):
+    def test_demo_processed_refund_is_marked_as_not_transferred(self):
+        repo = PostgresRefundRepository(FakeOrderPort(), tenant_id="ApexStore")
+        row = SimpleNamespace(
+            state="processed", staff_note="DEMO_REFUND_SIMULATED_NO_MONEY_MOVED; approved",
+            amount_inr=Decimal("607.38"), refund_id="REF-DEMO", order_id="ORD-TEST-123",
+            customer_id="42", idempotency_key="demo-key", reason="Demo test",
+            request_time=datetime.now(timezone.utc), decided_by=None, decided_at=None,
+        )
+        result = repo._to_domain(row)
+        self.assertTrue(result.simulated)
+        self.assertIn("no money was transferred", result.message)
+
     def test_auto_processed_row_has_no_non_staff_decided_by_actor(self):
         session = FakeSession(policy_config=SimpleNamespace(
             return_window_days=30,

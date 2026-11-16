@@ -428,6 +428,7 @@ class WorkerOrchestrator:
         refund_eligibility_by_order: dict[str, dict[str, Any]] = {}
         refund_ineligible_message: Optional[str] = None
         refund_failure_message: Optional[str] = None
+        refund_simulated_message: Optional[str] = None
         max_tool_steps = 3
         step = 0
         current_resp = llm_resp
@@ -450,6 +451,8 @@ class WorkerOrchestrator:
                     refund_eligibility_by_order[call_order_id] = res
                 if tc.name == "create_refund_request" and isinstance(res, dict):
                     refund_state = str(res.get("state", "")).lower()
+                    if refund_state == "processed" and res.get("simulated") is True:
+                        refund_simulated_message = str(res.get("message") or "This demo refund was simulated; no money was transferred.")
                     if refund_state in {"failed", "rejected"}:
                         refund_failure_message = (
                             "The store could not confirm this refund request. Please check your order’s return history before retrying, or contact support."
@@ -544,6 +547,8 @@ class WorkerOrchestrator:
             final_reply = refund_ineligible_message
         elif refund_failure_message:
             final_reply = refund_failure_message
+        elif refund_simulated_message:
+            final_reply = refund_simulated_message
 
         latency = round((time.perf_counter() - start_time) * 1000, 2)
 

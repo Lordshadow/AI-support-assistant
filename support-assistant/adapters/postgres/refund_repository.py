@@ -36,8 +36,12 @@ class PostgresRefundRepository:
 
     def _to_domain(self, row: RefundRequest) -> RefundResult:
         state_enum = RefundState(row.state)
+        simulated = str(row.staff_note or "").startswith("DEMO_REFUND_SIMULATED_NO_MONEY_MOVED")
         if state_enum == RefundState.PROCESSED:
-            msg = f"Refund of ₹{row.amount_inr:,} has been approved and processed automatically."
+            msg = (
+                f"This demo refund of ₹{row.amount_inr:,} was simulated; no money was transferred."
+                if simulated else f"Refund of ₹{row.amount_inr:,} has been approved and processed automatically."
+            )
         elif state_enum == RefundState.PENDING_APPROVAL:
             msg = (
                 f"Refund request of ₹{row.amount_inr:,} exceeds auto-approval threshold. "
@@ -63,6 +67,7 @@ class PostgresRefundRepository:
             decided_by=row.decided_by,
             decided_at=row.decided_at,
             note=row.staff_note,
+            simulated=simulated,
         )
 
     async def check_eligibility(
@@ -249,6 +254,10 @@ class PostgresRefundRepository:
                 # processing has no staff actor and must remain NULL.
                 decided_by=None,
                 decided_at=now if state == RefundState.PROCESSED else None,
+                staff_note=(
+                    "DEMO_REFUND_SIMULATED_NO_MONEY_MOVED"
+                    if storefront_result and storefront_result.get("simulated") is True else None
+                ),
                     # JSON columns do not support Decimal directly. Keep money exact
                     # by storing the canonical decimal text instead of a float.
                     eligibility_snapshot={
@@ -393,6 +402,7 @@ class PostgresRefundRepository:
                 "id": refund.get("id"),
                 "amount": refund.get("amount"),
                 "status": refund.get("status"),
+                **({"simulated": True} if str(refund.get("admin_note") or "").startswith("DEMO_REFUND_SIMULATED_NO_MONEY_MOVED") or str(refund.get("processor_ref") or "").startswith("DEMO-") else {}),
             }
         except (httpx.HTTPError, ValueError, TypeError):
             logger.exception("Store refund request failed before confirmation")

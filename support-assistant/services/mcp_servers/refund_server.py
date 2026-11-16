@@ -128,6 +128,7 @@ class MCPRefundServer:
             "amount_inr": str(result.amount_inr) if isinstance(result.amount_inr, Decimal) else result.amount_inr,
             "state": result.state.value,
             "message": result.message,
+            "simulated": result.simulated,
             "created_at": result.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
         }
 
@@ -152,6 +153,7 @@ class MCPRefundServer:
             "amount_inr": str(result.amount_inr) if isinstance(result.amount_inr, Decimal) else result.amount_inr,
             "state": result.state.value,
             "message": result.message,
+            "simulated": result.simulated,
             "decided_by": result.decided_by,
             "note": result.note
         }
