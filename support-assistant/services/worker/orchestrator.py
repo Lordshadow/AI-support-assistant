@@ -344,6 +344,7 @@ class WorkerOrchestrator:
         completion_tokens = llm_resp.token_usage.get("completion_tokens", 0)
         tool_calls_payload = []
         catalog_detail_results: list[dict[str, Any]] = []
+        catalog_details_grounded = False
         knowledge_retrieved = False
         max_tool_steps = 3
         step = 0
@@ -358,6 +359,8 @@ class WorkerOrchestrator:
                 res = await self.dispatcher.execute_tool(tc.name, tc.arguments, ctx)
                 if tc.name == "get_product_details" and isinstance(res, dict):
                     catalog_detail_results.append(res)
+                    if res.get("found") is True:
+                        catalog_details_grounded = True
                 if tc.name == "search_product_docs" and res.get("chunks"):
                     knowledge_retrieved = True
                 if tc.name == "search_policy" and res.get("clauses"):
@@ -408,6 +411,7 @@ class WorkerOrchestrator:
         only_live_data_tools = bool(tools_called_log) and set(tools_called_log).issubset(live_data_tools)
         if (
             not knowledge_retrieved
+            and not catalog_details_grounded
             and not only_live_data_tools
             and decision.route_type in ("small_model", "large_model")
         ):
@@ -420,7 +424,7 @@ class WorkerOrchestrator:
             cue in user_message.lower()
             for cue in ("price", "cost", "how much", "discount", "stock", "available")
         )
-        if catalog_detail_results and knowledge_retrieved and not asks_for_price:
+        if catalog_detail_results and catalog_details_grounded and not asks_for_price:
             for detail_result in catalog_detail_results:
                 if detail_result.get("found") is not True or not isinstance(detail_result.get("specs"), dict):
                     continue

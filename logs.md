@@ -2641,7 +2641,7 @@
 ## [Task-41] - Resolution of OpaqueResponseBlocking, CORS Missing Headers, and Groq 404 Model Not Found Failure
 **Timestamp:** 2026-11-05 13:13:00 IST  
 **Status:** COMPLETED & VERIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Resolve browser-reported issues on storefront (`http://localhost:3000`):
   1. `Cross-Origin Request Blocked: ... (Reason: CORS header 'Access-Control-Allow-Origin' missing). Status code: 500.`
   2. `[NovaRetail Widget] Turn request failed: TypeError: NetworkError when attempting to fetch resource.`
@@ -3118,7 +3118,7 @@
 ## [Task-110] - Fix Cloud Run database migration syntax failure
 **Timestamp:** 2026-11-12 13:41 +05:30  
 **Status:** IN-PROGRESS  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Diagnose the failed `assistant-db-migrate` execution and correct the migration source defect that prevented database setup.
 
 **Architectural Boundaries & Modularity:**
@@ -3143,7 +3143,7 @@
 ## [Task-111] - Prepare dashboard container for Cloud Run
 **Timestamp:** 2026-11-12 14:16 +05:30  
 **Status:** IN-PROGRESS  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Configure the dashboard container to proxy to the independently hosted Cloud Run API and listen on Cloud Run's default container port.
 
 **Architectural Boundaries & Modularity:**
@@ -3171,7 +3171,7 @@
 ## [Task-112] - Fix dashboard Nginx build validation
 **Timestamp:** 2026-11-12 14:29 +05:30  
 **Status:** IN-PROGRESS  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Fix the dashboard Cloud Build failure caused by Nginx resolving the local Compose-only `assistant-api` hostname during the image build.
 
 **Architectural Boundaries & Modularity:**
@@ -3615,7 +3615,7 @@
 ## [Task-60] - Verify Customer Support Widget Workflows
 **Timestamp:** 2026-11-10 00:00:00 (IST)  
 **Status:** VERIFIED WITH LIVE WHATSAPP INGRESS UNCONFIRMED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Verify customer chat, order/product context, tenant presentation settings, authenticated requests, OTP verification, formatted replies, and recoverable errors against the requested acceptance criteria.
 
 **Architectural Boundaries & Modularity:**
@@ -3637,7 +3637,7 @@
 ## [Task-61] - Verify Dashboard Operational Workflows
 **Timestamp:** 2026-11-10 14:20:00 (IST)  
 **Status:** IN-PROGRESS  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Validate each requested dashboard workflow in sequence, repair reproducible defects, and rerun targeted checks after each fix.
 
 **Architectural Boundaries & Modularity:**
@@ -3728,7 +3728,7 @@
 ## [Task-63] - Verification of Embedded Support Chat Functionality
 **Timestamp:** 2026-11-10 12:57:00 (Asia/Calcutta)  
 **Status:** COMPLETED & VERIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Verify the end-to-end customer journey for starting a support chat: customer opens the embedded chat on the storefront, views the tenant's greeting and suggested quick prompts, and successfully sends messages across both template and conversational paths.
 - Ensure compliance with Specification Section 16.1 & 16.2 (Open Shadow DOM encapsulation, textContent XSS protection, dynamic tenant configuration, and server-side origin security).
 
@@ -3793,7 +3793,7 @@
 ## [Task-64] - Verification of "Ask About A Product" Workflow with Page Context
 **Timestamp:** 2026-11-10 13:31:00 (Asia/Calcutta)  
 **Status:** COMPLETED & VERIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Verify the end-to-end customer workflow for asking product questions: customer visits a product page, the widget automatically extracts and binds page context (`product_id`, `page_type: "product_details"`, URL), sends this context alongside the customer's message to the assistant, and the assistant uses this context to retrieve grounded technical specifications and render formatted responses.
 - Resolve database migration discrepancies (`products.description` and `products.faqs` schema sync) and add catalog specification fallback across versioned and legacy staging tiers.
 
@@ -3923,7 +3923,7 @@
 ## [Task-67] - OpenWA Voice-to-Text Integration Setup and Readiness Check
 **Timestamp:** 2026-11-10 14:39 Asia/Calcutta  
 **Status:** IMPLEMENTED; WhatsApp pairing and backend integration test pending host/network setup  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Correct the WhatsApp voice path so only real decrypted audio reaches speech-to-text, and add the requested OpenWA-based WhatsApp session bridge.
 
 **Architectural Boundaries & Modularity:**
@@ -3975,7 +3975,7 @@
 ## [Task-69] - Diagnose storefront widget chat HTTP 500
 **Timestamp:** 2026-11-10 15:29:43 +05:30 (Asia/Calcutta)  
 **Status:** DIAGNOSED; authenticated order flow unresolved  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Check whether the embedded support widget and its chat API work, and investigate the reported POST /chat/messages?tenant_id=ApexStore HTTP 500.
 
 **Architectural Boundaries & Modularity:**
@@ -3999,7 +3999,7 @@
 ## [Task-70] - Verify widget with signed-in customer
 **Timestamp:** 2026-11-10 15:39:54 +05:30 (Asia/Calcutta)  
 **Status:** Authenticated product chat pass; order tracking fails  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Continue Task-69 using the user-provided storefront credentials to determine whether the widget failure occurs for a signed-in customer.
 
 **Architectural Boundaries & Modularity:**
@@ -4022,7 +4022,7 @@
 ## [Task-71] - Identify order-tracking TypeError root cause
 **Timestamp:** 2026-11-10 16:05:35 +05:30 (Asia/Calcutta)  
 **Status:** ROOT CAUSE IDENTIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Trace the signed-in widget's repeatable order-tracking 500 to the exact serialization boundary.
 
 **Architectural Boundaries & Modularity:**
@@ -4045,7 +4045,7 @@
 ## [Task-72] - Fix Decimal serialization in order tools
 **Timestamp:** 2026-11-10 16:07:34 +05:30 (Asia/Calcutta)  
 **Status:** IN-PROGRESS  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Prevent authenticated order-list and order-status tool calls from failing when PostgreSQL Numeric amounts reach the orchestrator's JSON serialization boundary.
 
 **Architectural Boundaries & Modularity:**
@@ -4065,7 +4065,7 @@
 ## [Task-72] - Fix Decimal serialization in order tools
 **Timestamp:** 2026-11-10 16:08:53 +05:30 (Asia/Calcutta)  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Prevent order-list and order-status tool calls from failing when database money values reach the orchestrator's JSON serialization boundary.
 
 **Architectural Boundaries & Modularity:**
@@ -4089,7 +4089,7 @@
 ## [Task-73] - Verify authenticated Track my order after fix
 **Timestamp:** 2026-11-10 16:11:34 +05:30 (Asia/Calcutta)  
 **Status:** VERIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Confirm the previously failing signed-in storefront widget action no longer returns HTTP 500 after Task-72.
 
 **Architectural Boundaries & Modularity:**
@@ -4112,7 +4112,7 @@
 ## [Task-74] - Audit dashboard, AI service, and RAG runtime
 **Timestamp:** 2026-11-10 16:46:11 +05:30 (Asia/Calcutta)  
 **Status:** PARTIALLY VERIFIED; LIVE SERVICES UNAVAILABLE  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Check the Support Desk against its tests/build and assess whether the AI and catalog RAG pipeline can be verified in the current local environment.
 
 **Architectural Boundaries & Modularity:**  
@@ -4138,7 +4138,7 @@
 ## [Task-75] - Fully verify dashboard, assistant API, and RAG pipeline
 **Timestamp:** 2026-11-10 17:12 +05:30 (Asia/Calcutta)  
 **Status:** VERIFIED; DEFECTS FIXED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Complete the live service and RAG checks that were previously blocked, fix defects exposed by the full suite and live dashboard, and leave the local stack running healthy.
 
 **Files Touched:**  
@@ -4169,7 +4169,7 @@
 ## [Task-76] - Fix live storefront order-status lookup
 **Timestamp:** 2026-11-10 17:35 +05:30 (Asia/Calcutta)  
 **Status:** FIXED AND LIVE-VERIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Diagnose the widget's false "order not found" response for a customer order that was visible in the storefront and restore owner-authenticated status lookup.
 
 **Files Touched:**  
@@ -4191,7 +4191,7 @@
 ## [Task-77] - Verify the AI auto-refund flow in the in-app browser
 **Timestamp:** 2026-11-10 17:42 +05:30 (Asia/Calcutta)  
 **Status:** AUTO-REFUND CHECK VERIFIED; NO ELIGIBLE ORDER AVAILABLE  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Run the under-₹2,000 refund eligibility workflow through the customer widget and ensure the no-money-moved local provider is active.
 
 **Files Touched:**  
@@ -4215,7 +4215,7 @@
 ## [Task-78] - Make the order confirmation timeline reflect live status
 **Timestamp:** 2026-11-10 17:58 +05:30 (Asia/Calcutta)  
 **Status:** SOURCE FIXED; LIVE CONTAINER REBUILD BLOCKED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Correct the order confirmation page, which displayed Processing and Paid / Processing even when the account order record showed Delivered.
 
 **Files Touched:**  
@@ -4233,7 +4233,7 @@
 ## [Task-79] - Include product classification in assistant order lookups
 **Timestamp:** 2026-11-10 18:12 +05:30 (Asia/Calcutta)  
 **Status:** SOURCE FIXED; SERVICE REBUILD BLOCKED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Diagnose why the assistant escalated refund eligibility for delivered order ORD-20261110-6138. The storefront API confirmed Delivered and a delivery timestamp, but its assistant-only order endpoint omitted the catalog category for purchased items. The refund policy therefore marked the Water item as unverified and refused eligibility.
 
 **Files Touched:**  
@@ -4251,7 +4251,7 @@
 ## [Task-80] - Rebuild catalog categories and assistant order lookup
 **Timestamp:** 2026-11-10 18:24 +05:30 (Asia/Calcutta)  
 **Status:** VERIFIED IN RUNNING STOREFRONT  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Correct product category mapping and ensure the assistant can resolve categories for older orders whose stored product IDs changed during catalog reseeding.
 
 **Files Touched:**  
@@ -4273,7 +4273,7 @@
 ## [Task-81] - Upgrade customer account and refund tracking
 **Timestamp:** 2026-11-10 18:38 +05:30 (Asia/Calcutta)  
 **Status:** BUILT AND VERIFIED IN THE IN-APP BROWSER  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Provide a cleaner customer dashboard and make fulfillment and storefront refund states visible from the account and order tracker.
 
 **Files Touched:**  
@@ -4297,7 +4297,7 @@
 **Timestamp:** 2026-11-10 18:50:00 +05:30 (Asia/Calcutta)  
 **Status:** VERIFIED  
 
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Verify that the AI-based refund workflow operates accurately, securely, and compliantly across all business policies, authorization tiers, and state machines.
 - Validate that the system adheres strictly to the architectural rule: *"The LLM understands and phrases. Code decides and acts."*
 - Verify multi-level authentication enforcement (`ANONYMOUS` $\rightarrow$ `IDENTIFIED` $\rightarrow$ `VERIFIED` via step-up OTP challenge).
@@ -4626,7 +4626,7 @@ ode --check support-assistant/static/widget/v1/widget.js passed (JavaScript synt
 ## [Task-103] - Diagnose WhatsApp messages receiving no reply
 **Timestamp:** 2026-11-11 02:45 +05:30  
 **Status:** DIAGNOSED; RUNTIME UNAVAILABLE  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Trace the configured OpenWA message path to explain why an incoming WhatsApp message gets no assistant reply.
 
 **Architectural Boundaries & Modularity:**
@@ -4650,7 +4650,7 @@ ode --check support-assistant/static/widget/v1/widget.js passed (JavaScript synt
 ## [Task-104] - Restore WhatsApp reply runtime
 **Timestamp:** 2026-11-11 08:40 +05:30  
 **Status:** RESTORED; READY FOR LIVE MESSAGE CHECK  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Restore the WhatsApp message path after discovering that the local OpenWA webhook adapter was not running.
 
 **Architectural Boundaries & Modularity:**
@@ -4677,7 +4677,7 @@ eady.
 ## [Task-105] - Format WhatsApp replies as message cards
 **Timestamp:** 2026-11-11 09:35 +05:30  
 **Status:** IMPLEMENTED; ADAPTER RESTARTED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Improve readability of WhatsApp support replies after the screenshot showed Markdown order tables being delivered as raw pipe-delimited text.
 
 **Architectural Boundaries & Modularity:**
@@ -4702,7 +4702,7 @@ ode --check src/bridge.js passed.
 ## [Task-106] - Recognize already-refunded orders
 **Timestamp:** 2026-11-11 10:18 +05:30  
 **Status:** IMPLEMENTED AND DEPLOYED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Fix refund replies that treated the storefront's Refunded order status as Unknown, despite the order being delivered and refunded.
 
 **Architectural Boundaries & Modularity:**
@@ -4728,7 +4728,7 @@ ode --check src/bridge.js passed.
 ## [Task-107] - Ignore generated test artifacts
 **Timestamp:** 2026-11-11 10:22 +05:30  
 **Status:** COMPLETE  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Keep disposable test-run and tooling outputs out of Git status without hiding maintainable test source files.
 
 **Architectural Boundaries & Modularity:**
@@ -4752,7 +4752,7 @@ ode --check src/bridge.js passed.
 ## [Task-108] - Correct widget embed instructions
 **Timestamp:** 2026-11-11 10:34 +05:30  
 **Status:** IMPLEMENTED AND DEPLOYED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Make the dashboard's copied widget snippet load the actual served asset and point requests at the assistant API origin.
 
 **Architectural Boundaries & Modularity:**
@@ -4777,7 +4777,7 @@ ode --check src/bridge.js passed.
 ## [Task-109] - Remove nested SkillOpt repository
 **Timestamp:** 2026-11-12 12:22 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Remove the unused nested `SkillOpt` repository clone from the project root workspace per user request.
 
 **Architectural Boundaries & Modularity:**
@@ -4800,7 +4800,7 @@ ode --check src/bridge.js passed.
 ## [Task-113] - Add safe initial staff administrator bootstrap
 **Timestamp:** 2026-11-12 15:42:46 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - The Cloud SQL migration created the staff-auth schema but no account, causing the deployed dashboard login to reject credentials. The existing seed script embeds predictable demo passwords and resets them, so add a production bootstrap path that accepts credentials at runtime and never modifies an existing account.
 
 **Architectural Boundaries & Modularity:**
@@ -4822,7 +4822,7 @@ ode --check src/bridge.js passed.
 ## [Task-114] - Apply tenant context during staff bootstrap
 **Timestamp:** 2026-11-12 16:07:46 +05:30  
 **Status:** VERIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - The bootstrap execution was rejected by PostgreSQL row-level security when inserting staff_tenant_memberships. The transaction rolled back, leaving no partial admin; the script must set the target tenant context before performing the insert.
 
 **Architectural Boundaries & Modularity:**
@@ -4844,7 +4844,7 @@ ode --check src/bridge.js passed.
 ## [Task-115] - Flush initial staff row before membership
 **Timestamp:** 2026-11-12 16:14:52 +05:30  
 **Status:** VERIFIED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - The next bootstrap execution passed the RLS policy but PostgreSQL rejected the membership row because the parent staff row had not yet been flushed. Force the parent insert before its foreign-key dependent membership.
 
 **Architectural Boundaries & Modularity:**
@@ -4867,7 +4867,7 @@ ode --check src/bridge.js passed.
 ## [Task-116] - Discard persisted WhatsApp voice audio after ingestion
 **Timestamp:** 2026-11-12 16:28 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Keep voice audio available in memory for the transcription webhook while ensuring OpenWA message history stores only an omitted-media marker, not the base64 audio bytes.
 - Scrub audio bytes already present in historical `audio`, `voice`, or legacy `ptt` message rows. Clear archive pointers so any old archived files are eligible for the existing orphan sweep.
 
@@ -4895,7 +4895,7 @@ ode --check src/bridge.js passed.
 ## [Task-117] - Fold OpenWA gateway source into the project repository
 **Timestamp:** 2026-11-12 17:51 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Bring the OpenWA gateway source into the main NovaRetail repository and remove the nested standalone Git repository so the gateway and bridge changes can be maintained together.
 
 **Architectural Boundaries & Modularity:**
@@ -4922,7 +4922,7 @@ ode --check src/bridge.js passed.
 ## [Task-118] - Ground policy answers and preserve Tanglish
 **Timestamp:** 2026-11-13 12:45 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Stop the assistant from inventing store policies when the customer has not configured policy records, and improve Tanglish handling for typed and voice messages.
 
 **Architectural Boundaries & Modularity:**  
@@ -4954,7 +4954,7 @@ ode --check src/bridge.js passed.
 ## [Task-119] - Require tenant policy configuration for refunds
 **Timestamp:** 2026-11-13 13:43 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Prevent refund eligibility from silently using built-in return windows or digital-item exclusions when no store policy has been configured.
 
 **Architectural Boundaries & Modularity:**  
@@ -4991,7 +4991,7 @@ ode --check src/bridge.js passed.
 ## [Task-120] - Add demo refund policy Markdown
 **Timestamp:** 2026-11-13 14:05 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Provide a clearly marked sample refund policy document for testing policy ingestion and assistant responses.
 
 **Architectural Boundaries & Modularity:**  
@@ -5015,7 +5015,7 @@ ode --check src/bridge.js passed.
 ## [Task-121] - Fix policy draft version-link ordering
 **Timestamp:** 2026-11-13 14:16:41 +05:30  
 **Status:** COMPLETED  
-**Objective & Rationale ("Why"):**  
+**Objective & Rationale ("Why"):**
 - Fix the policy-draft 500 reported in Cloud Run. PostgreSQL rejects knowledge-version chunk links when the parent version has not been inserted yet.
 
 **Architectural Boundaries & Modularity:**  
@@ -5186,3 +5186,27 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Build and deploy the updated `assistant-api`, then retry order tracking and confirm the API logs show HTTP 200 with no `LocalProtocolError`.
+
+## [Task-128] - Ground product answers from catalog detail lookup
+**Timestamp:** 2026-11-16 12:00 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- A live product question called `get_product_details()` successfully but returned zero document chunks. The orchestrator treated the turn as ungrounded and replaced the catalog-backed answer with the knowledge-base fallback.
+
+**Architectural Boundaries & Modularity:**
+- Count only a successful `found: true` structured catalog detail result as grounding for product-specific catalog facts. Preserve the existing fallback for missing product records and keep policy/manual/FAQ answers dependent on their respective retrieval sources.
+
+**Files Touched:**
+- `support-assistant/services/worker/orchestrator.py` (Modified - successful structured product details now satisfy the grounding gate and concise specification answer condition).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- `python -m unittest tests.test_worker_orchestrator.TestWorkerOrchestrator.test_focused_product_follow_up_stays_concise_with_verbose_model tests.test_worker_orchestrator.TestWorkerOrchestrator.test_product_page_context_drives_product_tool -v` — 2/2 passed.
+- Full `test_worker_orchestrator.py` suite — 20/23 passed; three failures are unrelated existing assertions in refund wording, prompt-injection wording, and unmatched-policy fallback wording.
+- `git diff --check -- support-assistant/services/worker/orchestrator.py` — passed.
+
+**Git Commit:**
+- Not committed.
+
+**Next Planned Task:**
+- [ ] Deploy the product grounding fix and verify one product question in the storefront; then investigate refund requests as requested.
