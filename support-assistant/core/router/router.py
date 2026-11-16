@@ -86,14 +86,19 @@ class AIRouter:
         # current tenant's vector retrieval and active knowledge version.
 
         # 5. Check Template for Order Status (Zero-Cost Template)
-        # If user provides order ID and query is purely tracking status
+        # An order ID on the validated order-details page is the active entity
+        # for a tracking request, just like an ID typed into the message.
         is_status_query = bool(re.search(r"\b(status|where is|track|eppo varum|delivery date)\b", clean_msg))
-        if norm.extracted_order_id and is_status_query and self.dispatcher:
+        page_order_id = None
+        if ctx.page_context and ctx.page_context.page_type == "order_details":
+            page_order_id = ctx.page_context.order_id
+        requested_order_id = norm.extracted_order_id or page_order_id
+        if requested_order_id and is_status_query and self.dispatcher:
             # If customer is identified, fetch status and render template directly
             if ctx.level.satisfies(AuthLevel.IDENTIFIED):
                 order_res = await self.dispatcher.execute_tool(
                     "get_order_status",
-                    {"order_id": norm.extracted_order_id},
+                    {"order_id": requested_order_id},
                     ctx
                 )
                 if order_res.get("found"):

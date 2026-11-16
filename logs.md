@@ -5118,3 +5118,25 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Deploy the updated `assistant-api` container so the live `/widget/widget.js` serves the change, then retry order tracking from `/orders?order_id=...`.
+
+## [Task-125] - Use the current order page for tracking requests
+**Timestamp:** 2026-11-16 09:42 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- The conversation trace showed `list_recent_orders()` with empty arguments even though the customer was viewing a specific order. Route tracking requests on an order-details page to that validated page order ID.
+
+**Architectural Boundaries & Modularity:**
+- Reuse the existing router's identified-customer order-status fast path and existing order ownership checks. Only use page context when it is a validated `order_details` context.
+
+**Files Touched:**
+- `support-assistant/core/router/router.py` (Modified - use the validated current-page order ID when the customer asks for order status without typing an ID).
+- `logs.md` (Modified - task progress record).
+
+**Verification & Quality Assurance:**
+- Reviewed the focused diff and ran `git diff --check` on the changed files. Automated tests were not run.
+
+**Git Commit:**
+- No commit created.
+
+**Next Planned Task:**
+- Build and deploy the updated `assistant-api`, then verify that order-page tracking calls `get_order_status` with the current page's order ID.
