@@ -312,7 +312,32 @@ class WorkerOrchestrator:
 
         conversation_history = self._history_for(ctx.conv_id)
         refund_order_followup_id = None
+        affirmative_refund_order_id = None
+        affirmative_refund_reason = "Customer confirmed the return request."
         bare_order_id = re.fullmatch(r"\s*(ORD[-_][A-Za-z0-9_-]+)\s*[.!]?\s*", user_message, re.I)
+        affirmative = re.fullmatch(r"\s*(yes|yes please|yeah|yep|proceed|go ahead|do it|please do|confirm)\s*[.!]?\s*", user_message, re.I)
+        if affirmative:
+            recent_history = conversation_history[-8:]
+            consent_prompt = next((
+                str(entry.get("content", "")) for entry in reversed(recent_history)
+                if entry.get("role") == "assistant"
+                and re.search(r"\b(would you like|shall i|should i)\b", str(entry.get("content", "")), re.I)
+                and re.search(r"\b(refund|return)\b", str(entry.get("content", "")), re.I)
+                and re.search(r"\b(proceed|submit|start)\b", str(entry.get("content", "")), re.I)
+            ), None)
+            if consent_prompt:
+                prompt_order = re.search(r"\bORD[-_][A-Z0-9_-]+\b", consent_prompt, re.I)
+                if prompt_order:
+                    affirmative_refund_order_id = prompt_order.group(0).upper().replace("_", "-")
+                    prior_reason = next((
+                        str(entry.get("content", "")).strip() for entry in reversed(recent_history)
+                        if entry.get("role") == "user"
+                        and str(entry.get("content", "")).strip()
+                        and not re.fullmatch(r"\s*(yes|yes please|yeah|yep|proceed|go ahead|do it|please do|confirm)\s*[.!]?\s*", str(entry.get("content", "")), re.I)
+                        and not re.fullmatch(r"\s*ORD[-_][A-Z0-9_-]+\s*[.!]?\s*", str(entry.get("content", "")), re.I)
+                    ), None)
+                    if prior_reason and len(prior_reason) >= 10:
+                        affirmative_refund_reason = prior_reason[:1000]
         if bare_order_id:
             recent_history = conversation_history[-8:]
             prior_refund_intent = any(
@@ -351,7 +376,20 @@ class WorkerOrchestrator:
         # First LLM Call: Plan tools or reply
         model_tier = "large" if decision.route_type == "large_model" else "small"
         try:
-            if refund_order_followup_id:
+            if affirmative_refund_order_id:
+                llm_resp = LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(
+                        call_id="refund-confirmed-by-customer",
+                        name="create_refund_request",
+                        arguments={
+                            "order_id": affirmative_refund_order_id,
+                            "reason": affirmative_refund_reason,
+                        },
+                    )],
+                    model_used="refund-confirmation-router",
+                )
+            elif refund_order_followup_id:
                 llm_resp = LLMResponse(
                     content=None,
                     tool_calls=[

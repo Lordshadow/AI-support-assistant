@@ -5290,3 +5290,27 @@ ode --check src/bridge.js passed.
 
 **Next Planned Task:**
 - Deploy this fix and inspect assistant-api logs for the exact storefront HTTP status that caused `STORE_SYNC_FAILED`.
+
+## [Task-132] - Continue refund after affirmative confirmation
+**Timestamp:** 2026-11-16 13:30 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- A live trace showed a customer replied `yes` to an explicit return confirmation, but the model made no tool call and returned the generic knowledge fallback. The storefront account page separately showed refund #4 as Failed with `processor_unavailable`.
+
+**Architectural Boundaries & Modularity:**
+- Interpret a short affirmative only when the immediately recent assistant turn explicitly asked to proceed with a refund/return and included an order ID. Route to the existing guarded refund tool; it still requires order-scoped OTP and store confirmation.
+
+**Files Touched:**
+- `support-assistant/services/worker/orchestrator.py` (Modified - route explicit affirmative confirmation to the previously offered order refund).
+- `support-assistant/tests/test_worker_orchestrator.py` (Modified - verify the order and reason reach the refund tool and OTP remains required).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- Focused refund tests — 4/4 passed, covering affirmative confirmation, order selection, failed store sync, and OTP requirement.
+- Python compilation, `node --check static/widget/v1/widget.js`, and `git diff --check` — passed.
+
+**Git Commit:**
+- Not committed yet.
+
+**Next Planned Task:**
+- Verify the new confirmation path, commit and push, then rebuild/deploy and inspect the storefront processor failure separately.

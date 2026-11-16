@@ -289,6 +289,30 @@ class TestWorkerOrchestrator(unittest.TestCase):
             "check_refund_eligibility", "create_refund_request"
         ])
 
+    def test_yes_after_refund_confirmation_prompt_submits_request_for_otp(self):
+        context = SessionContext(
+            tenant_id="demo",
+            conv_id="refund-affirmative-confirmation",
+            customer_id="CUST-42",
+            level=AuthLevel.IDENTIFIED,
+        )
+        self.orchestrator._conversation_history[context.conv_id] = [
+            {"role": "user", "content": "Refund ORD-20261116-5435 because it arrived damaged."},
+            {"role": "assistant", "content": "Order **ORD-20261116-5435** is eligible for a return. Would you like to proceed with the return?"},
+        ]
+
+        async def create_refund(name, arguments, _ctx):
+            self.assertEqual(name, "create_refund_request")
+            self.assertEqual(arguments["order_id"], "ORD-20261116-5435")
+            self.assertIn("arrived damaged", arguments["reason"])
+            return {"needs_auth": "otp_required", "message": "Please verify the refund using the code sent to your account email."}
+
+        with patch.object(self.dispatcher, "execute_tool", new=AsyncMock(side_effect=create_refund)):
+            response = run_sync(self.orchestrator.process_turn("yes", context))
+
+        self.assertEqual(response.requires_action, "needs_otp")
+        self.assertEqual(response.step_up_order_id, "ORD-20261116-5435")
+
     def test_refund_store_failure_never_claims_success(self):
         class LyingModel:
             calls = 0
