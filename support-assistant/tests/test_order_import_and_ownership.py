@@ -71,6 +71,19 @@ class TestOrderImportAndOwnership(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.repo._dict_to_domain(self.make_payload(customer_id="1"), "3")
 
+    def test_store_api_environment_values_trim_secret_file_newlines(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {
+            "APEXSTORE_CATALOG_API_URL": "https://store.invalid/api/assistant/v1\r\n",
+            "APEXSTORE_CATALOG_API_TOKEN": "machine-token\r\n",
+        }):
+            repo = PostgresOrderRepository()
+
+        self.assertEqual(repo.store_api_url, "https://store.invalid/api/assistant/v1")
+        self.assertEqual(repo.store_api_token, "machine-token")
+
     def test_identities_are_not_aliases(self):
         self.assertNotEqual("1", "3")
         self.assertNotEqual("3", "CUST-42")

@@ -32,8 +32,8 @@ class PostgresOrderRepository:
     ):
         self.tenant_id = tenant_id
         self._session_factory = session_factory
-        self.store_api_url = (store_api_url or os.getenv("APEXSTORE_CATALOG_API_URL", "")).rstrip("/")
-        self.store_api_token = store_api_token or os.getenv("APEXSTORE_CATALOG_API_TOKEN", "")
+        self.store_api_url = (store_api_url or os.getenv("APEXSTORE_CATALOG_API_URL", "")).strip().rstrip("/")
+        self.store_api_token = (store_api_token or os.getenv("APEXSTORE_CATALOG_API_TOKEN", "")).strip()
 
     def _to_domain(self, row: OrderModel) -> Order:
         items = [

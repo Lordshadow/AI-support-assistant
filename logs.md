@@ -5158,7 +5158,31 @@ ode --check src/bridge.js passed.
 - Reviewed the focused diff and ran `git diff --check` on the changed files. Automated tests were not run.
 
 **Git Commit:**
-- `9a215f7 chore(orders): log safe storefront lookup diagnostics`.
+- `96b9858 chore(orders): log safe storefront lookup diagnostics`.
 
 **Next Planned Task:**
 - Build and deploy the diagnostic revision, then inspect `assistant-api` logs during a single order lookup.
+
+## [Task-127] - Trim Cloud Run storefront API credentials
+**Timestamp:** 2026-11-16 11:02 +05:30
+**Status:** COMPLETED
+**Objective & Rationale ("Why"):**
+- Cloud Run logs show `LocalProtocolError` before the assistant's request reaches ApexStore. Secret files commonly include trailing CR/LF bytes; trim the storefront URL and API token on load so HTTPX receives valid request values.
+
+**Architectural Boundaries & Modularity:**
+- Normalize only the API URL and machine credential at the order repository boundary. Never log or expose token values.
+
+**Files Touched:**
+- `support-assistant/adapters/postgres/order_repository.py` (Modified - trim whitespace from storefront API URL and token during initialization).
+- `support-assistant/tests/test_order_import_and_ownership.py` (Modified - verify CRLF-terminated environment values are normalized).
+- `logs.md` (Modified - task record).
+
+**Verification & Quality Assurance:**
+- `python -m unittest discover -s tests -p test_order_import_and_ownership.py -v` — 10/10 passed, including a new CRLF environment-value regression case.
+- `git diff --check` — passed for the changed files.
+
+**Git Commit:**
+- `d5441d4 fix(orders): trim storefront API credentials`.
+
+**Next Planned Task:**
+- Build and deploy the updated `assistant-api`, then retry order tracking and confirm the API logs show HTTP 200 with no `LocalProtocolError`.
